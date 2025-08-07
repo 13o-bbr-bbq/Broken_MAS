@@ -1,0 +1,4 @@
+autogen
+autogen-ext[mcp]
+fastmcp
+python-a2a[mcp]

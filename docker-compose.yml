@@ -1,0 +1,130 @@
+version: "3.8"
+
+
+services:
+  # ────────────────────────────────────────────────────────────
+  # System1 services
+  # ────────────────────────────────────────────────────────────
+  system1_mcp_analysis:
+    build:
+      context: ./system1/analysis
+      dockerfile: ../../Dockerfile
+    container_name: system1_mcp_analysis
+    working_dir: /app
+    volumes:
+      - ./system1/analysis:/app
+    ports:
+      - "8001:8080"
+    command: ["python", "app.py"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.socket().connect(('localhost',8080))"]
+      interval: 5s
+      timeout: 2s
+      retries: 5
+      start_period: 5s
+
+  system1_mcp_translation:
+    build:
+      context: ./system1/translate
+      dockerfile: ../../Dockerfile
+    container_name: system1_mcp_translation
+    working_dir: /app
+    volumes:
+      - ./system1/translate:/app
+    ports:
+      - "8002:8080"
+    command: ["python", "app.py"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.socket().connect(('localhost',8080))"]
+      interval: 5s
+      timeout: 2s
+      retries: 5
+      start_period: 5s
+
+  system1_agent:
+    build:
+      context: ./system1/agent
+      dockerfile: ../../Dockerfile
+    container_name: system1_agent
+    working_dir: /app
+    volumes:
+      - ./system1/agent:/app
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL}
+      - MCP_ANALYSIS_URL=http://system1_mcp_analysis:8080/mcp
+      - MCP_TRANSLATION_URL=http://system1_mcp_translation:8080/mcp
+      - PEER_A2A_URL=http://system2_agent:9000
+      - A2A_AGENT_NAME=System1A2A
+      - A2A_PORT=9000
+    depends_on:
+      system1_mcp_analysis:
+        condition: service_healthy
+      system1_mcp_translation:
+        condition: service_healthy
+    ports:
+      - "9001:9000"
+    command: ["python", "app.py"]
+
+  # ────────────────────────────────────────────────────────────
+  # System2 services
+  # ────────────────────────────────────────────────────────────
+  system2_mcp_analysis:
+    build:
+      context: ./system2/analysis
+      dockerfile: ../../Dockerfile
+    container_name: system2_mcp_analysis
+    working_dir: /app
+    volumes:
+      - ./system2/analysis:/app
+    ports:
+      - "8101:8080"
+    command: ["python", "app.py"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.socket().connect(('localhost',8080))"]
+      interval: 5s
+      timeout: 2s
+      retries: 5
+      start_period: 5s
+
+  system2_mcp_translation:
+    build:
+      context: ./system2/translate
+      dockerfile: ../../Dockerfile
+    container_name: system2_mcp_translation
+    working_dir: /app
+    volumes:
+      - ./system2/translate:/app
+    ports:
+      - "8102:8080"
+    command: ["python", "app.py"]
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import socket; socket.socket().connect(('localhost',8080))" ]
+      interval: 5s
+      timeout: 2s
+      retries: 5
+
+  system2_agent:
+    build:
+      context: ./system2/agent
+      dockerfile: ../../Dockerfile
+    container_name: system2_agent
+    working_dir: /app
+    volumes:
+      - ./system2/agent:/app
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL}
+      - MCP_ANALYSIS_URL=http://system2_mcp_analysis:8080/mcp
+      - MCP_TRANSLATION_URL=http://system2_mcp_translation:8080/mcp
+      - PEER_A2A_URL=http://system1_agent:9000
+      - A2A_AGENT_NAME=System2A2A
+      - A2A_PORT=9000
+    depends_on:
+      system2_mcp_analysis:
+        condition: service_healthy
+      system2_mcp_translation:
+        condition: service_healthy
+    ports:
+      - "9011:9000"
+    command: ["python", "app.py"]
