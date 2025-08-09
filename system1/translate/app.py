@@ -10,14 +10,6 @@ def create_server() -> FastMCP:
         description="Reverse the characters in the given text."
     )
     def reverse_text(text: str) -> str:
-        """Reverse a string.
-
-        Args:
-            text: The input string to reverse.
-
-        Returns:
-            The reversed string.
-        """
         return text[::-1]
 
     return mcp

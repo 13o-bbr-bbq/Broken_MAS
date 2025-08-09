@@ -86,6 +86,7 @@ services:
       - MCP_ANALYSIS_URL=http://system1_mcp_analysis:8080/mcp
       - MCP_TRANSLATION_URL=http://system1_mcp_translation:8080/mcp
       - PEER_A2A_URL=http://system2_a2a_server:9000
+      - AUTOGEN_DISABLE_RUNTIME_TRACING=true
     depends_on:
       system1_mcp_analysis:
         condition: service_healthy
@@ -147,6 +148,7 @@ services:
       - PEER_A2A_URL=http://system1_a2a_server:9000
       - A2A_AGENT_NAME=System2A2A
       - A2A_PORT=9000
+      - AUTOGEN_DISABLE_RUNTIME_TRACING=true
     depends_on:
       system2_mcp_analysis:
         condition: service_healthy
