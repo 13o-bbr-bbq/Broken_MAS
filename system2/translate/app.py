@@ -1,11 +1,3 @@
-"""
-FastMCP server for System 2: Translation service
-
-This server exposes the same `reverse_text` tool as System 1.  Having
-both systems expose the same tool allows us to demonstrate delegating
-calls between agents using A2A.
-"""
-
 from fastmcp import FastMCP
 
 

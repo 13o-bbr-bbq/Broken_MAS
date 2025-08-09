@@ -1,12 +1,3 @@
-"""
-FastMCP server for System 1: Translation service
-
-This server exposes a single tool `reverse_text` that simply reverses the
-characters of the input string.  It demonstrates how to add a tool to a
-FastMCP server with a description so that agents can discover its
-functionality.
-"""
-
 from fastmcp import FastMCP
 
 
