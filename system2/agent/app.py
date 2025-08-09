@@ -1,6 +1,7 @@
 import os
 import asyncio
 import anyio
+import logging
 from typing import Optional
 
 from autogen_agentchat.agents import UserProxyAgent
@@ -12,6 +13,8 @@ from autogen_ext.models.openai import OpenAIChatCompletionClient
 from autogen_core.tools import FunctionTool
 from python_a2a import A2AClient
 
+logging.getLogger("autogen_core").setLevel(logging.WARNING)
+logging.getLogger("autogen_core.events").setLevel(logging.WARNING)
 
 def create_autogen_agent(peer_url: Optional[str]) -> Agent:
     # Create model client.
@@ -55,7 +58,7 @@ def create_autogen_agent(peer_url: Optional[str]) -> Agent:
 
 async def run_user_chat(agent: Agent) -> None:
     user_proxy = UserProxyAgent("user_proxy", input_func=input)
-    team = RoundRobinGroupChat([agent, user_proxy], max_turns=1)
+    team = RoundRobinGroupChat([agent, user_proxy])
     stream = team.run_stream(task="")
     await Console(stream)
 
