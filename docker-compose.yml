@@ -41,7 +41,38 @@ services:
       retries: 5
       start_period: 5s
 
+  system1_a2a_server:
+    build:
+      context: ./system1/a2a_server
+      dockerfile: ../../Dockerfile
+    container_name: system1_a2a_server
+    working_dir: /app
+    volumes:
+      - ./system1/a2a_server:/app
+    environment:
+      - MCP_ANALYSIS_URL=http://system1_mcp_analysis:8080/mcp
+      - MCP_TRANSLATION_URL=http://system1_mcp_translation:8080/mcp
+      - PEER_A2A_URL=http://system2_a2a_server:9000
+      - A2A_AGENT_NAME=System1A2A
+      - A2A_PORT=9000
+    depends_on:
+      system1_mcp_analysis:
+        condition: service_healthy
+      system1_mcp_translation:
+        condition: service_healthy
+    ports:
+      - "9001:9000"
+    command: ["python", "app.py"]
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import socket; socket.socket().connect(('localhost', 9000))" ]
+      interval: 5s
+      timeout: 2s
+      retries: 5
+      start_period: 5s
+
   system1_agent:
+    stdin_open: true
+    tty: true
     build:
       context: ./system1/agent
       dockerfile: ../../Dockerfile
@@ -54,16 +85,14 @@ services:
       - OPENAI_MODEL=${OPENAI_MODEL}
       - MCP_ANALYSIS_URL=http://system1_mcp_analysis:8080/mcp
       - MCP_TRANSLATION_URL=http://system1_mcp_translation:8080/mcp
-      - PEER_A2A_URL=http://system2_agent:9000
-      - A2A_AGENT_NAME=System1A2A
-      - A2A_PORT=9000
+      - PEER_A2A_URL=http://system2_a2a_server:9000
     depends_on:
       system1_mcp_analysis:
         condition: service_healthy
       system1_mcp_translation:
         condition: service_healthy
-    ports:
-      - "9001:9000"
+      system1_a2a_server:
+        condition: service_healthy
     command: ["python", "app.py"]
 
   # ────────────────────────────────────────────────────────────
@@ -104,7 +133,38 @@ services:
       timeout: 2s
       retries: 5
 
+  system2_a2a_server:
+    build:
+      context: ./system2/a2a_server
+      dockerfile: ../../Dockerfile
+    container_name: system2_a2a_server
+    working_dir: /app
+    volumes:
+      - ./system2/a2a_server:/app
+    environment:
+      - MCP_ANALYSIS_URL=http://system2_mcp_analysis:8080/mcp
+      - MCP_TRANSLATION_URL=http://system2_mcp_translation:8080/mcp
+      - PEER_A2A_URL=http://system1_a2a_server:9000
+      - A2A_AGENT_NAME=System2A2A
+      - A2A_PORT=9000
+    depends_on:
+      system2_mcp_analysis:
+        condition: service_healthy
+      system2_mcp_translation:
+        condition: service_healthy
+    ports:
+      - "9011:9000"
+    command: ["python", "app.py"]
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import socket; socket.socket().connect(('localhost', 9000))" ]
+      interval: 5s
+      timeout: 2s
+      retries: 5
+      start_period: 5s
+
   system2_agent:
+    stdin_open: true
+    tty: true
     build:
       context: ./system2/agent
       dockerfile: ../../Dockerfile
@@ -117,14 +177,12 @@ services:
       - OPENAI_MODEL=${OPENAI_MODEL}
       - MCP_ANALYSIS_URL=http://system2_mcp_analysis:8080/mcp
       - MCP_TRANSLATION_URL=http://system2_mcp_translation:8080/mcp
-      - PEER_A2A_URL=http://system1_agent:9000
-      - A2A_AGENT_NAME=System2A2A
-      - A2A_PORT=9000
+      - PEER_A2A_URL=http://system1_a2a_server:9000
     depends_on:
       system2_mcp_analysis:
         condition: service_healthy
       system2_mcp_translation:
         condition: service_healthy
-    ports:
-      - "9011:9000"
+      system2_a2a_server:
+        condition: service_healthy
     command: ["python", "app.py"]

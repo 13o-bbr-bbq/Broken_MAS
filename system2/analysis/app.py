@@ -1,11 +1,3 @@
-"""
-FastMCP server for System 2: Analysis service
-
-This server is identical to System 1's analysis server.  It exposes a
-`summarize_text` tool that truncates the input string to the first
-200 characters.
-"""
-
 from fastmcp import FastMCP
 
 

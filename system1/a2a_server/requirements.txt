@@ -1,0 +1,2 @@
+fastmcp
+python-a2a[mcp]

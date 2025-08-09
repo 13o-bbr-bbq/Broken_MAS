@@ -1,12 +1,3 @@
-"""
-FastMCP server for System 1: Analysis service
-
-This simple server exposes a `summarize_text` tool via the Model Context
-Protocol.  The tool takes an input string and returns a short summary by
-truncating the text to the first 200 characters.  Descriptions are
-provided via the decorator so that agents can introspect the tool.
-"""
-
 from fastmcp import FastMCP
 
 
