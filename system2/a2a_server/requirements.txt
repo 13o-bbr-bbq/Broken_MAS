@@ -1,2 +1,4 @@
 fastmcp
-python-a2a[mcp]
+a2a-sdk
+uvicorn
+httpx

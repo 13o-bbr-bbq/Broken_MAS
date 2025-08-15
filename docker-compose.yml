@@ -5,14 +5,14 @@ services:
   # ────────────────────────────────────────────────────────────
   # System1 services
   # ────────────────────────────────────────────────────────────
-  system1_mcp_analysis:
+  system1_mcp_find_restaurant:
     build:
-      context: ./system1/analysis
+      context: system1/find_restaurant
       dockerfile: ../../Dockerfile
-    container_name: system1_mcp_analysis
+    container_name: system1_mcp_find_restaurant
     working_dir: /app
     volumes:
-      - ./system1/analysis:/app
+      - ./system1/find_restaurant:/app
     ports:
       - "8001:8080"
     command: ["python", "app.py"]
@@ -23,14 +23,16 @@ services:
       retries: 5
       start_period: 5s
 
-  system1_mcp_translation:
+  system1_mcp_restaurant_detail:
     build:
-      context: ./system1/translate
+      context: system1/restaurant_detail
       dockerfile: ../../Dockerfile
-    container_name: system1_mcp_translation
+    container_name: system1_mcp_restaurant_detail
     working_dir: /app
     volumes:
-      - ./system1/translate:/app
+      - ./system1/restaurant_detail:/app
+    environment:
+      - PEER_A2A_2_URL=http://system2_a2a_server:9000
     ports:
       - "8002:8080"
     command: ["python", "app.py"]
@@ -50,15 +52,15 @@ services:
     volumes:
       - ./system1/a2a_server:/app
     environment:
-      - MCP_ANALYSIS_URL=http://system1_mcp_analysis:8080/mcp
-      - MCP_TRANSLATION_URL=http://system1_mcp_translation:8080/mcp
-      - PEER_A2A_URL=http://system2_a2a_server:9000
-      - A2A_AGENT_NAME=System1A2A
-      - A2A_PORT=9000
+      - MCP_FIND_RESTAURANT_URL=http://system1_mcp_find_restaurant:8080/mcp
+      - MCP_RESTAURANT_DETAIL_URL=http://system1_mcp_restaurant_detail:8080/mcp
+      - PEER_A2A_2_URL=http://system2_a2a_server:9000
+      - A2A_1_AGENT_NAME=System1A2A
+      - A2A_1_PORT=9000
     depends_on:
-      system1_mcp_analysis:
+      system1_mcp_find_restaurant:
         condition: service_healthy
-      system1_mcp_translation:
+      system1_mcp_restaurant_detail:
         condition: service_healthy
     ports:
       - "9001:9000"
@@ -83,14 +85,15 @@ services:
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL}
-      - MCP_ANALYSIS_URL=http://system1_mcp_analysis:8080/mcp
-      - MCP_TRANSLATION_URL=http://system1_mcp_translation:8080/mcp
-      - PEER_A2A_URL=http://system2_a2a_server:9000
+      - MCP_FIND_RESTAURANT_URL=http://system1_mcp_find_restaurant:8080/mcp
+      - MCP_RESTAURANT_DETAIL_URL=http://system1_mcp_restaurant_detail:8080/mcp
+      - A2A_1_AGENT_NAME=System1A2A
+      - PEER_A2A_1_URL=http://system1_a2a_server:9000
       - AUTOGEN_DISABLE_RUNTIME_TRACING=true
     depends_on:
-      system1_mcp_analysis:
+      system1_mcp_find_restaurant:
         condition: service_healthy
-      system1_mcp_translation:
+      system1_mcp_restaurant_detail:
         condition: service_healthy
       system1_a2a_server:
         condition: service_healthy
@@ -99,14 +102,14 @@ services:
   # ────────────────────────────────────────────────────────────
   # System2 services
   # ────────────────────────────────────────────────────────────
-  system2_mcp_analysis:
+  system2_mcp_menu:
     build:
-      context: ./system2/analysis
+      context: system2/menu
       dockerfile: ../../Dockerfile
-    container_name: system2_mcp_analysis
+    container_name: system2_mcp_menu
     working_dir: /app
     volumes:
-      - ./system2/analysis:/app
+      - ./system2/menu:/app
     ports:
       - "8101:8080"
     command: ["python", "app.py"]
@@ -117,14 +120,14 @@ services:
       retries: 5
       start_period: 5s
 
-  system2_mcp_translation:
+  system2_mcp_order:
     build:
-      context: ./system2/translate
+      context: system2/order
       dockerfile: ../../Dockerfile
-    container_name: system2_mcp_translation
+    container_name: system2_mcp_order
     working_dir: /app
     volumes:
-      - ./system2/translate:/app
+      - ./system2/order:/app
     ports:
       - "8102:8080"
     command: ["python", "app.py"]
@@ -141,22 +144,25 @@ services:
     container_name: system2_a2a_server
     working_dir: /app
     volumes:
-      - ./system2/a2a_server:/app
+      #- ./system2/a2a_server:/app
+      - .:/app
     environment:
-      - MCP_ANALYSIS_URL=http://system2_mcp_analysis:8080/mcp
-      - MCP_TRANSLATION_URL=http://system2_mcp_translation:8080/mcp
-      - PEER_A2A_URL=http://system1_a2a_server:9000
-      - A2A_AGENT_NAME=System2A2A
-      - A2A_PORT=9000
+      - PYTHONPATH=/app
+      - MCP_MENU_URL=http://system2_mcp_menu:8080/mcp
+      - MCP_ORDER_URL=http://system2_mcp_order:8080/mcp
+      - PEER_A2A_1_URL=http://system1_a2a_server:9000
+      - A2A_AGENT_2_NAME=System2A2A
+      - A2A_2_PORT=9000
       - AUTOGEN_DISABLE_RUNTIME_TRACING=true
     depends_on:
-      system2_mcp_analysis:
+      system2_mcp_menu:
         condition: service_healthy
-      system2_mcp_translation:
+      system2_mcp_order:
         condition: service_healthy
     ports:
       - "9011:9000"
-    command: ["python", "app.py"]
+    #command: ["python", "app.py"]
+    command: python system2/a2a_server/app.py
     healthcheck:
       test: [ "CMD", "python", "-c", "import socket; socket.socket().connect(('localhost', 9000))" ]
       interval: 5s
@@ -177,13 +183,13 @@ services:
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL}
-      - MCP_ANALYSIS_URL=http://system2_mcp_analysis:8080/mcp
-      - MCP_TRANSLATION_URL=http://system2_mcp_translation:8080/mcp
+      - MCP_MENU_URL=http://system2_mcp_menu:8080/mcp
+      - MCP_ORDER_URL=http://system2_mcp_order:8080/mcp
       - PEER_A2A_URL=http://system1_a2a_server:9000
     depends_on:
-      system2_mcp_analysis:
+      system2_mcp_menu:
         condition: service_healthy
-      system2_mcp_translation:
+      system2_mcp_order:
         condition: service_healthy
       system2_a2a_server:
         condition: service_healthy
