@@ -1,5 +1,7 @@
 # Multi-Agent System Implementation with MCP and A2A
 
+<img src="./assets/images/broken_mas_logo.png" width="70%">
+
 This repository contains an example of how to build two independent AI agent
 systems that each use [AutoGen](https://github.com/microsoft/autogen) as the
 agent framework, [FastMCP](https://github.com/jlowin/fastmcp) for exposing
