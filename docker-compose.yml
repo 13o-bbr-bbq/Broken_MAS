@@ -55,6 +55,7 @@ services:
       - MCP_FIND_RESTAURANT_URL=http://system1_mcp_find_restaurant:8080/mcp
       - MCP_RESTAURANT_DETAIL_URL=http://system1_mcp_restaurant_detail:8080/mcp
       - PEER_A2A_2_URL=http://system2_a2a_server:9000
+      - A2A_1_SERVER=http://system1_a2a_server:9000
       - A2A_1_AGENT_NAME=System1A2A
       - A2A_1_PORT=9000
     depends_on:
@@ -151,6 +152,7 @@ services:
       - MCP_MENU_URL=http://system2_mcp_menu:8080/mcp
       - MCP_ORDER_URL=http://system2_mcp_order:8080/mcp
       - PEER_A2A_1_URL=http://system1_a2a_server:9000
+      - A2A_2_SERVER=http://system2_a2a_server:9000
       - A2A_AGENT_2_NAME=System2A2A
       - A2A_2_PORT=9000
       - AUTOGEN_DISABLE_RUNTIME_TRACING=true

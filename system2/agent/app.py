@@ -2,7 +2,6 @@ import os
 import asyncio
 import anyio
 import logging
-from typing import Optional, Dict, Any, List
 
 from autogen_agentchat.agents import UserProxyAgent
 from autogen_agentchat.teams import RoundRobinGroupChat
@@ -15,43 +14,6 @@ from fastmcp import Client as FastMCPClient
 logging.getLogger("autogen_core").setLevel(logging.WARNING)
 logging.getLogger("autogen_core.events").setLevel(logging.WARNING)
 
-
-def _choose_item(menu: List[Dict[str, Any]], wish: Optional[str], budget_jpy: Optional[int]) -> Optional[Dict[str, Any]]:
-    if wish:
-        cand = [m for m in menu if wish in m["name"]]
-        if budget_jpy is not None:
-            cand = [x for x in cand if x["price"] <= budget_jpy]
-        if cand:
-            return sorted(cand, key=lambda x: x["price"])[-1]
-    if budget_jpy is not None:
-        under = [m for m in menu if m["price"] <= budget_jpy]
-        if under:
-            return sorted(under, key=lambda x: x["price"])[-1]
-    return sorted(menu, key=lambda x: x["price"])[0] if menu else None
-
-def decide_and_order(requirements: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    System1からの指示（requirements: wish/budget_jpy 等）を受け、
-    System2内MCPでメニュー選定→注文→結果を返す。
-    """
-    menu_client = FastMCPClient(os.getenv("MCP_MENU_URL"))
-    order_client = FastMCPClient(os.getenv("MCP_ORDER_URL"))
-
-    wish = requirements.get("wish")
-    budget = requirements.get("budget_jpy")
-
-    menu = menu_client.invoke_tool("get_menu")
-    item = _choose_item(menu, wish, budget)
-    if not item:
-        return {"status": "no_match", "reason": "条件に合致なし"}
-
-    order = order_client.invoke_tool("place_order", item_name=item["name"], price=item["price"])
-    return {
-        "status": "confirmed",
-        "ordered_item": order["ordered_item"],
-        "price": order["price"],
-        "estimated_delivery": order["estimated_delivery"]
-    }
 
 def create_autogen_agent() -> Agent:
     # Create model client.

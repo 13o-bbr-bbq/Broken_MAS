@@ -8,7 +8,7 @@ def create_server() -> FastMCP:
 
     @mcp.tool(
         name="place_order",
-        description="商品名と価格を受け取り、ダミーの配達予定時刻を返す。"
+        description="Receive the product name and price, and return a delivery schedule."
     )
     def place_order(item_name: str, price: int) -> Dict[str, Any]:
         eta = (datetime.now() + timedelta(minutes=35)).isoformat(timespec="minutes")

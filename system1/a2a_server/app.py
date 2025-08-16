@@ -3,7 +3,7 @@ import json
 import uuid
 import uvicorn
 import httpx
-from typing import Dict, Any
+from typing import Any
 
 # A2A.
 from a2a.server.apps import A2AStarletteApplication
@@ -13,48 +13,82 @@ from a2a.server.agent_execution import AgentExecutor
 from a2a.server.agent_execution.context import RequestContext
 from a2a.server.events.event_queue import EventQueue
 from a2a.types import (
-    AgentCard, AgentSkill, AgentCapabilities,
-    MessageSendParams, SendMessageRequest,
+    AgentCard,
+    AgentSkill,
+    AgentCapabilities,
+    MessageSendParams,
+    SendMessageRequest,
 )
-from a2a.client.card_resolver import A2ACardResolver
-from a2a.client.client import Client as A2AClient
+from a2a.client import A2ACardResolver, A2AClient
 from a2a.utils.message import new_agent_text_message
 
 
 class OrderProxyExecutor(AgentExecutor):
-    """受け取った仕様書(JSON)を System2 の A2A に転送し、応答をそのまま返す。"""
+    """Transfer the received specifications (JSON) to System2's A2A and return the response as is."""
 
     def __init__(self, peer_base_url: str):
         self.peer_base_url = peer_base_url
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
-        # System1への入力（textパートJSON）をそのまま System2 へ転送
-        in_json = {}
-        try:
-            parts = getattr(context.message, "parts", []) or []
-            text_parts = [p for p in parts if getattr(p, "kind", "") == "text"]
-            if text_parts:
-                in_json = json.loads(getattr(text_parts[0], "text", "{}"))
-        except Exception:
-            pass
+        # Transfer input to System 1 (text part JSON) to System 2 as is.
+        parts = getattr(context.message, "parts", []) or []
+        print(f"System1: from Agent's parts: {parts}, {type(parts)}")
 
-        # System2 の AgentCard を解決し、message/send を実行
+        def unwrap(x):
+            # Extract from "Part(root=...), RootModel(__root__/root=...)"
+            if hasattr(x, "root"):
+                return x.root
+            if hasattr(x, "__root__"):
+                return x.__root__
+            return x
+
+        text = None
+        for p in parts:
+            base = unwrap(p)
+            if getattr(base, "kind", None) == "text":
+                text = getattr(base, "text", None)
+                if text:
+                    break
+
+        if text is None:
+            raise ValueError("No text part found in message parts.")
+        in_json = json.loads(text)
+        print(f"System1: from Agent's in_json: {in_json}, {type(in_json)}")
+
+        # Resolve the AgentCard in System2 and execute message/send.
         async with httpx.AsyncClient() as httpx_client:
-            resolver = A2ACardResolver(httpx_client=httpx_client, base_url=self.peer_base_url)
-            system2_card = await resolver.get_agent_card()  # /.well-known/agent-card.json 取得
-            client = A2AClient(httpx_client=httpx_client, agent_card=system2_card)
+            # Create A2A rsolver.
+            resolver = A2ACardResolver(
+                httpx_client=httpx_client,
+                base_url=self.peer_base_url
+            )
 
-            payload = {
+            # Get "/.well-known/agent-card.json" on System2 A2A Server.
+            system2_card = await resolver.get_agent_card()
+
+            # Create A2A Client.
+            client = A2AClient(
+                httpx_client=httpx_client,
+                agent_card=system2_card
+            )
+
+            # Send message.
+            send_message_payload: dict[str, Any] = {
                 "message": {
                     "role": "user",
-                    "parts": [{"kind": "text", "text": json.dumps(in_json, ensure_ascii=False)}],
+                    "parts": [
+                        {"kind": "text", "text": json.dumps(in_json, ensure_ascii=False)}
+                    ],
                     "messageId": uuid.uuid4().hex,
                 }
             }
-            request = SendMessageRequest(id=str(uuid.uuid4()), params=MessageSendParams(**payload))
-            response = await client.send_message(request)  # 非ストリーミング応答
+            request = SendMessageRequest(
+                id=str(uuid.uuid4()),
+                params=MessageSendParams(**send_message_payload)
+            )
+            response = await client.send_message(request)
+            print(response.model_dump(mode='json', exclude_none=True))
 
-        # 応答（Message結果）の最初の text をそのまま返す（= System2のJSON文字列）
         result_json_text = ""
         if getattr(response, "result", None) and getattr(response.result, "parts", None):
             parts = response.result.parts
@@ -69,18 +103,18 @@ class OrderProxyExecutor(AgentExecutor):
         raise Exception("cancel not supported")
 
 
-def build_agent_card(base_url: str) -> AgentCard:
+def build_agent_card() -> AgentCard:
     skill = AgentSkill(
         id="send_order_spec_to_system2",
         name="Send order spec to System2",
         description="Proxy: forward order spec JSON to System2 A2A and return the result.",
         tags=["proxy", "order"],
-        examples=['{"task_id":"t-123","requirements":{"wish":"マルゲリータ","budget_jpy":2000}}'],
+        examples=['{"task_id":"t-123","requirements":{"wish":"margherita","budget_jpy":2000}}'],
     )
     return AgentCard(
         name=os.getenv("A2A_1_AGENT_NAME", "System1A2A"),
         description="A2A interface for System1 (proxy to System2)",
-        url=base_url,
+        url=os.getenv("A2A_1_SERVER"),
         version="1.0.0",
         default_input_modes=["text"],
         default_output_modes=["text"],
@@ -90,18 +124,14 @@ def build_agent_card(base_url: str) -> AgentCard:
 
 
 def main():
-    port = int(os.getenv("A2A_1_PORT", "9000"))
-    base_url = f"http://localhost:{port}/"
-    peer_url = os.getenv("PEER_A2A_2_URL")
-
     server = A2AStarletteApplication(
-        agent_card=build_agent_card(base_url),
+        agent_card=build_agent_card(),
         http_handler=DefaultRequestHandler(
-            agent_executor=OrderProxyExecutor(peer_base_url=peer_url),
+            agent_executor=OrderProxyExecutor(peer_base_url=os.getenv("PEER_A2A_2_URL")),
             task_store=InMemoryTaskStore(),
         ),
     )
-    uvicorn.run(server.build(), host="0.0.0.0", port=port)
+    uvicorn.run(server.build(), host="0.0.0.0", port=int(os.getenv("A2A_1_PORT", "9000")))
 
 
 if __name__ == "__main__":
