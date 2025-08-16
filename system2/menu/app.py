@@ -1,22 +1,35 @@
 from fastmcp import FastMCP
 from typing import List, Dict, Any
+from pydantic import BaseModel, Field
 
 MENU = [
-    {"name": "マルゲリータ", "price": 1800, "description": "トマト・モッツァレラ・バジル"},
-    {"name": "ペパロニ", "price": 2200, "description": "スパイシーペパロニ"},
-    {"name": "クワトロフォルマッジ", "price": 2400, "description": "4種のチーズ"},
-    {"name": "マリナーラ", "price": 1200, "description": "トマト・ニンニク・オレガノ"},
+    {"name": "margherita", "price": 1800, "description": "tomato, mozzarella, basil"},
+    {"name": "pepperoni", "price": 2200, "description": "spicy pepperoni"},
+    {"name": "seafood", "price": 1900, "description": "shrimp, crab, squid, tuna"},
+    {"name": "marinara", "price": 1200, "description": "Tomato, garlic, oregano"},
 ]
+
+class MenuItem(BaseModel):
+    name: str = Field(..., description="Menu item name")
+    price: int = Field(..., ge=0, description="Price in JPY")
+    description: str = Field(..., description="Short description of the item")
+
+
+class MenuResponse(BaseModel):
+    items: List[MenuItem]
+
 
 def create_server() -> FastMCP:
     mcp = FastMCP("pizza_menu")
 
     @mcp.tool(
         name="get_menu",
-        description="ピザ屋のメニュー一覧を返す。"
+        description="Return a list of items on a pizza menu."
     )
-    def get_menu() -> List[Dict[str, Any]]:
-        return MENU
+    def get_menu() -> MenuResponse:
+        res = MenuResponse(items=[MenuItem(**x) for x in MENU])
+        print(f"System2: from MCP Server's res: {res}, {type(res)}")
+        return MenuResponse(items=[MenuItem(**x) for x in MENU])
 
     return mcp
 

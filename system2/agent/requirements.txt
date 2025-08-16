@@ -1,5 +1,5 @@
+openai
 autogen
 autogen-ext[mcp]
 autogen-agentchat
 fastmcp
-python-a2a[mcp]

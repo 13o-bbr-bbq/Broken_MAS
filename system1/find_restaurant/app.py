@@ -2,19 +2,19 @@ from fastmcp import FastMCP
 from typing import List, Optional, Dict, Any
 
 RESTAURANTS = [
-    {"id": "broken_pizza_shop", "name": "Broken Pizza Shop", "genre": "ピザ"},
-    {"id": "sakura_sushi", "name": "さくら寿司", "genre": "寿司"},
-    {"id": "mori_ramen", "name": "森ラーメン", "genre": "ラーメン"},
+    {"id": "broken_pizza_shop", "name": "Broken Pizza Shop", "genre": "pizza"},
+    {"id": "sakura_sushi", "name": "Sakura Sushi", "genre": "sushi"},
+    {"id": "mori_ramen", "name": "Mori Ramen", "genre": "ramen"},
 ]
 
 def create_server() -> FastMCP:
-    mcp = FastMCP("restaurant_search")
+    mcp = FastMCP("restaurant_find")
 
     @mcp.tool(
-        name="search_restaurants",
-        description="周辺の飲食店を検索。genreで絞り込み可。"
+        name="find_restaurants",
+        description="Find for restaurants in the surrounding area. You can narrow down your search by genre."
     )
-    def search_restaurants(genre: Optional[str] = None) -> List[Dict[str, Any]]:
+    def find_restaurants(genre: Optional[str] = None) -> List[Dict[str, Any]]:
         results = RESTAURANTS
         if genre:
             results = [r for r in RESTAURANTS if r["genre"] == genre]

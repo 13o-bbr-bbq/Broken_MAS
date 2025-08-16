@@ -16,8 +16,7 @@ from autogen_ext.models.openai import OpenAIChatCompletionClient
 from autogen_core.tools import FunctionTool
 
 # A2A.
-from a2a.client.card_resolver import A2ACardResolver
-from a2a.client.client import Client as A2AClient
+from a2a.client import A2ACardResolver, A2AClient
 from a2a.types import MessageSendParams, SendMessageRequest
 
 
@@ -47,29 +46,39 @@ def create_autogen_agent() -> Agent:
         戻りの text パート(JSON文字列)を dict にして返す。
         """
         async with httpx.AsyncClient() as httpx_client:
-            # 1) AgentCard を解決
-            resolver = A2ACardResolver(httpx_client=httpx_client, base_url=peer_base_url)
-            card = await resolver.get_agent_card()
+            # Create A2A rsolver.
+            resolver = A2ACardResolver(
+                httpx_client=httpx_client,
+                base_url=peer_base_url
+            )
 
-            # 2) クライアント生成
-            client = A2AClient(httpx_client=httpx_client, agent_card=card)
+            # Get "/.well-known/agent-card.json" on System1 A2A Server.
+            system1_card = await resolver.get_agent_card()
 
-            # 3) 送信ペイロード（text パートに JSON 仕様をそのまま入れる）
-            payload = {
+            # Create A2A Client.
+            client = A2AClient(
+                httpx_client=httpx_client,
+                agent_card=system1_card
+            )
+
+            # Send message.
+            send_message_payload: dict[str, Any] = {
                 "message": {
                     "role": "user",
                     "parts": [{"kind": "text", "text": json.dumps(spec, ensure_ascii=False)}],
                     "messageId": uuid.uuid4().hex,
                 }
             }
-            req = SendMessageRequest(id=str(uuid.uuid4()), params=MessageSendParams(**payload))
-
-            # 4) 送信（非ストリーミング）
-            resp = await client.send_message(req)
+            print(f"System1: to A2A Server's spec: {spec}, {type(spec)}")
+            request = SendMessageRequest(
+                id=str(uuid.uuid4()),
+                params=MessageSendParams(**send_message_payload)
+            )
+            response = await client.send_message(request)
 
             # 5) 応答の text パートから JSON を抽出
-            if getattr(resp, "result", None) and getattr(resp.result, "parts", None):
-                for p in resp.result.parts:
+            if getattr(response, "result", None) and getattr(response.result, "parts", None):
+                for p in response.result.parts:
                     if getattr(p, "kind", "") == "text":
                         text = getattr(p, "text", "")
                         if text:
@@ -91,14 +100,15 @@ def create_autogen_agent() -> Agent:
     agent = Agent(
         name=os.getenv("A2A_1_AGENT_NAME", "System1Agent"),
         system_message=(
-            "You are System1. "
-            "1) use search_restaurants to find pizza shops; "
-            "2) use get_restaurant_details to fetch A2A URL; "
-            "3) build an order spec from user's wish/budget; "
-            "4) call send_order_via_a2a(spec); "
-            "5) present the result. "
-            "必ず send_order_via_a2a を呼び出す前に JSON 形式の 'spec' を構築すること。"
-            "spec は以下のキーを含む: task_id, requirements(wish, budget_jpy)"
+            "You are System 1. Your role is as follows."
+            "* Find for restaurants using the MCP server (find_restaurant)"
+            "* Retrieve restaurant details using the MCP server (restaurant_detail)"
+            "* Create order specifications (specs) according to user wish and budget."
+            "* Send order details (spec) using the System2 A2A server (send_order_via_a2a)."
+            "* Receive and display order details from System2."
+            "## important"
+            "* Be sure to create a JSON-formatted **spec** before calling **send_order_via_a2a**."
+            "* **spec** must include the following keys: **task_id**, **requirements(wish, budget_jpy)**"
         ),
         description="Restaurant finder + order spec builder",
         tools=tools,
@@ -119,4 +129,5 @@ def main() -> None:
     anyio.run(run_user_chat, agent)
 
 if __name__ == "__main__":
+    print("Start")
     main()
