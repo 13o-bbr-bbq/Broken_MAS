@@ -74,18 +74,31 @@ def create_autogen_agent() -> Agent:
                 id=str(uuid.uuid4()),
                 params=MessageSendParams(**send_message_payload)
             )
+
             response = await client.send_message(request)
+            print(f"System1: from A2A Server's response: {response}, {type(response)}")
+
+            def _unwrap_part(x):
+                if hasattr(x, "root"):
+                    return x.root
+                if hasattr(x, "__root__"):
+                    return x.__root__
+                return x
 
             # 5) 応答の text パートから JSON を抽出
-            if getattr(response, "result", None) and getattr(response.result, "parts", None):
-                for p in response.result.parts:
-                    if getattr(p, "kind", "") == "text":
-                        text = getattr(p, "text", "")
+            resp_obj = getattr(response, "root", response)  # SendMessageSuccessResponse になる
+            msg = getattr(resp_obj, "result", None)
+            if msg and getattr(msg, "parts", None):
+                for p in msg.parts:
+                    base = _unwrap_part(p)  # Part -> TextPart を剥がす
+                    if getattr(base, "kind", None) == "text":
+                        text = getattr(base, "text", None)
                         if text:
                             try:
                                 return json.loads(text)
                             except Exception:
                                 return {"status": "error", "reason": "invalid JSON from A2A", "raw": text}
+
             return {"status": "error", "reason": "empty A2A response"}
 
     # FunctionTool は async 関数をそのまま登録可能

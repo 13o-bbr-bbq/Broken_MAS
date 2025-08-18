@@ -42,7 +42,7 @@ def create_autogen_agent() -> Agent:
 async def run_user_chat(agent: Agent) -> None:
     user_proxy = UserProxyAgent("user_proxy", input_func=input)
     team = RoundRobinGroupChat([agent, user_proxy])
-    stream = team.run_stream(task="Please get the menu and order user's favorite pizza.")
+    stream = team.run_stream(task="")
     await Console(stream)
 
 

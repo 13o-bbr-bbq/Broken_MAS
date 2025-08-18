@@ -87,17 +87,17 @@ class OrderProxyExecutor(AgentExecutor):
                 params=MessageSendParams(**send_message_payload)
             )
             response = await client.send_message(request)
-            print(response.model_dump(mode='json', exclude_none=True))
+            model_dump = response.model_dump(mode='json', exclude_none=True)
 
-        result_json_text = ""
-        if getattr(response, "result", None) and getattr(response.result, "parts", None):
-            parts = response.result.parts
-            for p in parts:
-                if getattr(p, "kind", "") == "text":
-                    result_json_text = getattr(p, "text", "")
-                    break
-
-        await event_queue.enqueue_event(new_agent_text_message(result_json_text))
+        parts = (model_dump.get("result") or {}).get("parts") or []
+        result_json_text = next((p.get("text") for p in parts if isinstance(p, dict) and p.get("kind") == "text" and p.get("text")), "")
+        if result_json_text:
+            print(f"System1: from System2 A2A Server's ordered spec: {result_json_text}, {type(result_json_text)}")
+            await event_queue.enqueue_event(new_agent_text_message(result_json_text))
+        else:
+            print("System1: from System2 A2A Server's order error.")
+            error_payload = {"status": "error", "reason": "empty A2A response"}
+            await event_queue.enqueue_event(new_agent_text_message(json.dumps(error_payload, ensure_ascii=False)))
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         raise Exception("cancel not supported")
