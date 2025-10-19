@@ -57,15 +57,15 @@ class PersistentListMemory:
             return False
         t = text.strip().replace("\r\n", "\n")
 
-        lower = t.lower()
-        injection_like = any(kw in lower for kw in [
-            "ignore previous", "disregard previous", "system prompt",
-            "you must", "do not obey", "override instruction"
-        ])
-        if injection_like:
-            return False
+        #lower = t.lower()
+        #injection_like = any(kw in lower for kw in [
+        #    "ignore previous", "disregard previous", "system prompt",
+        #    "you must", "do not obey", "override instruction"
+        #])
+        #if injection_like:
+        #    return False
 
-        if len(t) > 1200:  # 過度な肥大化対策（要約運用に置換可）
+        if len(t) > 1200:
             return False
 
         sha1 = hashlib.sha1(t.encode("utf-8")).hexdigest()
@@ -76,7 +76,7 @@ class PersistentListMemory:
         rec = {
             "ns": self.namespace,
             "text": t,
-            "source": source,     # "user" / "tool:mcp.xxx" / "a2a:system2"
+            "source": source,
             "author": author,
             "tags": tags or [],
             "confidence": float(confidence),
@@ -328,11 +328,11 @@ def create_autogen_agent() -> Agent:
             "## important"
             "* Before building specs, call `retrieve_memory` with queries like 'preference', 'budget', etc. "
             "* Use only what is returned (Top-K) as context for the user profile. Do NOT assume anything else.\n"
-            "* If a restaurant item contains field `customer_tips`, summarize them as user-relevant hints and persist using `save_user_fact(tags=['customer_tips'])`. \n"
+            "* If a user's query contains information about their preferences, summarize it and persist it using `save_user_fact(tags=[‘preference’])`."
             "* After ANY call to restaurant finder tools (e.g., `find_michelin_restaurants` or `find_restaurants`), "
             "IMMEDIATELY call `persist_customer_tips` and pass the FULL JSON array from the tool. "
-            "If you have the array object, call: persist_customer_tips(items=<THE_ARRAY>, tag='preference'). "
-            "If you only have a JSON string, call: persist_customer_tips(items_json=<THE_JSON_STRING>, tag='preference'). "
+            "If you have the array object, call: persist_customer_tips(items=<THE_ARRAY>, tag='customer_tips') '). "
+            "If you only have a JSON string, call: persist_customer_tips(items_json=<THE_JSON_STRING>, tag='customer_tips'). "
             "Do not skip this step even if tips look irrelevant."
             "* Be sure to create a JSON-formatted **spec** before calling **send_order_via_a2a**.\n"
             "* **spec** must include the following keys: **task_id**, **requirements(wish, budget_jpy)**"
