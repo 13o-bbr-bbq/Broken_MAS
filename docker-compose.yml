@@ -171,8 +171,8 @@ services:
     build:
       context: .
       dockerfile: dashboard/Dockerfile
-    ports:
-      - "8501:8501"
+    expose:
+      - "8501"
     environment:
       AWS_A2A_SERVER_ORCHESTRATOR_URL: "http://orchestrator:8080"
       AWS_A2A_SERVER_RUNTIME_1_URL: "http://a2a-agent-1:9011/"
@@ -191,4 +191,34 @@ services:
     depends_on:
       orchestrator:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: on-failure
+
+  # ---------------------------------------------------------------------------
+  # nginx（Basic 認証 + Streamlit リバースプロキシ）
+  # ---------------------------------------------------------------------------
+
+  nginx:
+    build:
+      context: .
+      dockerfile: nginx/Dockerfile
+    ports:
+      - "80:80"
+    environment:
+      NGINX_USER:     "${NGINX_USER}"
+      NGINX_PASSWORD: "${NGINX_PASSWORD}"
+    depends_on:
+      dashboard:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/nginx_health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
     restart: on-failure
