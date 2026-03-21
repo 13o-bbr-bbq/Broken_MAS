@@ -1,0 +1,4 @@
+strands-agents[a2a,otel]==1.31.0
+fastapi
+mcp
+boto3

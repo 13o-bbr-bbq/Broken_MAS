@@ -1,0 +1,4 @@
+langfuse>=3.0.0
+networkx>=3.0
+pyvis>=0.3.2
+python-dotenv>=1.0.0

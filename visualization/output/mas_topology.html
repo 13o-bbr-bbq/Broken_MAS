@@ -1,0 +1,127 @@
+<html>
+    <head>
+        <meta charset="utf-8">
+        
+            <script src="lib/bindings/utils.js"></script>
+            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.2/dist/dist/vis-network.min.css" integrity="sha512-WgxfT5LWjfszlPHXRmBWHkV2eceiWTOBvrKCNbdgDYTHrT2AeLCGbF4sZlZw3UMN3WtL0tGUoIAKsu8mllg/XA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.2/dist/vis-network.min.js" integrity="sha512-LnvoEWDFrqGHlHmDD2101OrLcbsfkrzoSpvtSQtxK3RMnRV0eOkhhBN2dXHKRrUU8p2DGRTk35n4O8nWSVe1mQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+            
+        
+<center>
+<h1>MAS Topology — 26 traces — 2026-02-26 18:34</h1>
+</center>
+
+<!-- <link rel="stylesheet" href="../node_modules/vis/dist/vis.min.css" type="text/css" />
+<script type="text/javascript" src="../node_modules/vis/dist/vis.js"> </script>-->
+        <link
+          href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0-beta3/dist/css/bootstrap.min.css"
+          rel="stylesheet"
+          integrity="sha384-eOJMYsd53ii+scO/bJGFsiCZc+5NDVN2yr8+0RDqr0Ql0h+rP48ckxlpbzKgwra6"
+          crossorigin="anonymous"
+        />
+        <script
+          src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0-beta3/dist/js/bootstrap.bundle.min.js"
+          integrity="sha384-JEW9xMcG8R+pH31jmWH6WWP0WintQrMb4s7ZOdauHnUtxwoG2vI5DkLtS3qm9Ekf"
+          crossorigin="anonymous"
+        ></script>
+
+
+        <center>
+          <h1>MAS Topology — 26 traces — 2026-02-26 18:34</h1>
+        </center>
+        <style type="text/css">
+
+             #mynetwork {
+                 width: 100%;
+                 height: 850px;
+                 background-color: #1a1a2e;
+                 border: 1px solid lightgray;
+                 position: relative;
+                 float: left;
+             }
+
+             
+
+             
+
+             
+        </style>
+    </head>
+
+
+    <body>
+        <div class="card" style="width: 100%">
+            
+            
+            <div id="mynetwork" class="card-body"></div>
+        </div>
+
+        
+        
+
+        <script type="text/javascript">
+
+              // initialize global variables.
+              var edges;
+              var nodes;
+              var allNodes;
+              var allEdges;
+              var nodeColors;
+              var originalNodes;
+              var network;
+              var container;
+              var options, data;
+              var filter = {
+                  item : '',
+                  property : '',
+                  value : []
+              };
+
+              
+
+              
+
+              // This method is responsible for drawing the graph, returns the drawn network
+              function drawGraph() {
+                  var container = document.getElementById('mynetwork');
+
+                  
+
+                  // parsing and collecting nodes and edges from the python
+                  nodes = new vis.DataSet([{"borderWidth": 2, "borderWidthSelected": 4, "color": {"background": "#A738D6", "border": "#A738D6", "highlight": {"background": "#A738D6", "border": "#ffffff"}, "hover": {"background": "#A738D6", "border": "#ffffff"}}, "font": {"color": "#ffffff"}, "id": "llm_anthropic_claude_3_5_sonnet_20", "image": "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB4PSIwLjUiIHk9IjAuNSIgd2lkdGg9IjIzIiBoZWlnaHQ9IjIzIiByeD0iMy41IiBmaWxsPSIjRjVEREZGIi8+PHJlY3QgeD0iMC41IiB5PSIwLjUiIHdpZHRoPSIyMyIgaGVpZ2h0PSIyMyIgcng9IjMuNSIgc3Ryb2tlPSIjQTczOEQ2IiBzdHJva2UtZGFzaGFycmF5PSIyIDIiLz48ZyBjbGlwLXBhdGg9InVybCgjY3QpIj48cGF0aCBkPSJNOS41IDEwLjk5OTlIMTFWOS40OTk5M0w5LjI1IDcuNzQ5OTNDOS44MDk4MiA3LjQ4MjU2IDEwLjQzODggNy4zOTUzMyAxMS4wNTAyIDcuNTAwMjRDMTEuNjYxNyA3LjYwNTE1IDEyLjIyNTUgNy44OTcwNCAxMi42NjQyIDguMzM1NzFDMTMuMTAyOSA4Ljc3NDM5IDEzLjM5NDggOS4zMzgyOCAxMy40OTk3IDkuOTQ5NzNDMTMuNjA0NiAxMC41NjEyIDEzLjUxNzQgMTEuMTkwMSAxMy4yNSAxMS43NDk5TDE2LjI1IDE0Ljc0OTlDMTYuNDQ4OSAxNC45NDg4IDE2LjU2MDcgMTUuMjE4NiAxNi41NjA3IDE1LjQ5OTlDMTYuNTYwNyAxNS43ODEyIDE2LjQ0ODkgMTYuMDUxIDE2LjI1IDE2LjI0OTlDMTYuMDUxMSAxNi40NDg4IDE1Ljc4MTMgMTYuNTYwNiAxNS41IDE2LjU2MDZDMTUuMjE4NyAxNi41NjA2IDE0Ljk0ODkgMTYuNDQ4OCAxNC43NSAxNi4yNDk5TDExLjc1IDEzLjI0OTlDMTEuMTkwMiAxMy41MTczIDEwLjU2MTMgMTMuNjA0NSA5Ljk0OTggMTMuNDk5NkM5LjMzODM1IDEzLjM5NDcgOC43NzQ0NyAxMy4xMDI4IDguMzM1NzkgMTIuNjY0MUM3Ljg5NzExIDEyLjIyNTUgNy42MDUyMiAxMS42NjE2IDcuNTAwMzEgMTEuMDUwMUM3LjM5NTQxIDEwLjQzODcgNy40ODI2NCA5LjgwOTc0IDcuNzUgOS4yNDk5M0w5LjUgMTAuOTk5OVoiIHN0cm9rZT0iYmxhY2siIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPjwvZz48ZGVmcz48Y2xpcFBhdGggaWQ9ImN0Ij48cmVjdCB3aWR0aD0iMTIiIGhlaWdodD0iMTIiIGZpbGw9IndoaXRlIiB0cmFuc2Zvcm09InRyYW5zbGF0ZSg2IDYpIi8+PC9jbGlwUGF0aD48L2RlZnM+PC9zdmc+", "label": "Amazon Bedrock\n(anthropic.claude-3-5-sonnet-20240620-v1:0)", "shape": "image", "size": 26, "title": "\u003cb\u003eAmazon Bedrock\u003cbr\u003e(anthropic.claude-3-5-sonnet-20240620-v1:0)\u003c/b\u003e\u003cbr\u003e\u7a2e\u5225: llm\u003cbr\u003e\u9001\u4fe1\u547c\u3073\u51fa\u3057\u6570: 0\u003cbr\u003e\u53d7\u4fe1\u547c\u3073\u51fa\u3057\u6570: 8"}, {"borderWidth": 2, "borderWidthSelected": 4, "color": {"background": "#4ECDC4", "border": "#4ECDC4", "highlight": {"background": "#4ECDC4", "border": "#ffffff"}, "hover": {"background": "#4ECDC4", "border": "#ffffff"}}, "font": {"color": "#ffffff"}, "id": "a2a_agent_1", "image": "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHJ4PSIyMCIgZmlsbD0iIzE2NEVBRiIvPjxwYXRoIGQ9Ik0yMCAxMS42NjY2VjEzLjMzMzNNMTcuNSAyMFYyNy41TTIyLjUgMjBWMjcuNU0xNC4xNjY3IDIzLjMzMzNMMTcuNSAyMS42NjY2TTIyLjUgMjEuNjY2NkwyNS44MzMzIDIzLjMzMzNNMTcuNSAyNUgyMi41TTE4LjMzMzMgMTYuNjY2NlYxNi42NzVNMjEuNjY2NyAxNi42NjY2VjE2LjY3NU0xNSAxNUMxNSAxNC41NTc5IDE1LjE3NTYgMTQuMTM0IDE1LjQ4ODIgMTMuODIxNEMxNS44MDA3IDEzLjUwODkgMTYuMjI0NiAxMy4zMzMzIDE2LjY2NjcgMTMuMzMzM0gyMy4zMzMzQzIzLjc3NTQgMTMuMzMzMyAyNC4xOTkzIDEzLjUwODkgMjQuNTExOCAxMy44MjE0QzI0LjgyNDQgMTQuMTM0IDI1IDE0LjU1NzkgMjUgMTVWMTguMzMzM0MyNSAxOC43NzUzIDI0LjgyNDQgMTkuMTk5MiAyNC41MTE4IDE5LjUxMThDMjQuMTk5MyAxOS44MjQ0IDIzLjc3NTQgMjAgMjMuMzMzMyAyMEgxNi42NjY3QzE2LjIyNDYgMjAgMTUuODAwNyAxOS44MjQ0IDE1LjQ4ODIgMTkuNTExOEMxNS4xNzU2IDE5LjE5OTIgMTUgMTguNzc1MyAxNSAxOC4zMzMzVjE1WiIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIxLjQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPjwvc3ZnPg==", "label": "A2A Agent 1\n(Finding Restaurants Agent)", "shape": "circularImage", "size": 28, "title": "\u003cb\u003eA2A Agent 1\u003cbr\u003e(Finding Restaurants Agent)\u003c/b\u003e\u003cbr\u003e\u7a2e\u5225: a2a_agent\u003cbr\u003e\u9001\u4fe1\u547c\u3073\u51fa\u3057\u6570: 11\u003cbr\u003e\u53d7\u4fe1\u547c\u3073\u51fa\u3057\u6570: 0"}, {"borderWidth": 2, "borderWidthSelected": 4, "color": {"background": "#4ECDC4", "border": "#4ECDC4", "highlight": {"background": "#4ECDC4", "border": "#ffffff"}, "hover": {"background": "#4ECDC4", "border": "#ffffff"}}, "font": {"color": "#ffffff"}, "id": "agent_Strands Agents", "image": "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHJ4PSIyMCIgZmlsbD0iIzE2NEVBRiIvPjxwYXRoIGQ9Ik0yMCAxMS42NjY2VjEzLjMzMzNNMTcuNSAyMFYyNy41TTIyLjUgMjBWMjcuNU0xNC4xNjY3IDIzLjMzMzNMMTcuNSAyMS42NjY2TTIyLjUgMjEuNjY2NkwyNS44MzMzIDIzLjMzMzNNMTcuNSAyNUgyMi41TTE4LjMzMzMgMTYuNjY2NlYxNi42NzVNMjEuNjY2NyAxNi42NjY2VjE2LjY3NU0xNSAxNUMxNSAxNC41NTc5IDE1LjE3NTYgMTQuMTM0IDE1LjQ4ODIgMTMuODIxNEMxNS44MDA3IDEzLjUwODkgMTYuMjI0NiAxMy4zMzMzIDE2LjY2NjcgMTMuMzMzM0gyMy4zMzMzQzIzLjc3NTQgMTMuMzMzMyAyNC4xOTkzIDEzLjUwODkgMjQuNTExOCAxMy44MjE0QzI0LjgyNDQgMTQuMTM0IDI1IDE0LjU1NzkgMjUgMTVWMTguMzMzM0MyNSAxOC43NzUzIDI0LjgyNDQgMTkuMTk5MiAyNC41MTE4IDE5LjUxMThDMjQuMTk5MyAxOS44MjQ0IDIzLjc3NTQgMjAgMjMuMzMzMyAyMEgxNi42NjY3QzE2LjIyNDYgMjAgMTUuODAwNyAxOS44MjQ0IDE1LjQ4ODIgMTkuNTExOEMxNS4xNzU2IDE5LjE5OTIgMTUgMTguNzc1MyAxNSAxOC4zMzMzVjE1WiIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIxLjQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPjwvc3ZnPg==", "label": "Strands Agents", "shape": "circularImage", "size": 28, "title": "\u003cb\u003eStrands Agents\u003c/b\u003e\u003cbr\u003e\u7a2e\u5225: a2a_agent\u003cbr\u003e\u9001\u4fe1\u547c\u3073\u51fa\u3057\u6570: 3\u003cbr\u003e\u53d7\u4fe1\u547c\u3073\u51fa\u3057\u6570: 0"}, {"borderWidth": 4, "borderWidthSelected": 6, "color": {"background": "#FF6B6B", "border": "#FF6B6B", "highlight": {"background": "#FF6B6B", "border": "#ffffff"}, "hover": {"background": "#FF6B6B", "border": "#ffffff"}}, "font": {"color": "#ffffff"}, "id": "orchestrator", "image": "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHJ4PSIyMCIgZmlsbD0iIzE2NEVBRiIvPjxwYXRoIGQ9Ik0yMCAxMS42NjY2VjEzLjMzMzNNMTcuNSAyMFYyNy41TTIyLjUgMjBWMjcuNU0xNC4xNjY3IDIzLjMzMzNMMTcuNSAyMS42NjY2TTIyLjUgMjEuNjY2NkwyNS44MzMzIDIzLjMzMzNNMTcuNSAyNUgyMi41TTE4LjMzMzMgMTYuNjY2NlYxNi42NzVNMjEuNjY2NyAxNi42NjY2VjE2LjY3NU0xNSAxNUMxNSAxNC41NTc5IDE1LjE3NTYgMTQuMTM0IDE1LjQ4ODIgMTMuODIxNEMxNS44MDA3IDEzLjUwODkgMTYuMjI0NiAxMy4zMzMzIDE2LjY2NjcgMTMuMzMzM0gyMy4zMzMzQzIzLjc3NTQgMTMuMzMzMyAyNC4xOTkzIDEzLjUwODkgMjQuNTExOCAxMy44MjE0QzI0LjgyNDQgMTQuMTM0IDI1IDE0LjU1NzkgMjUgMTVWMTguMzMzM0MyNSAxOC43NzUzIDI0LjgyNDQgMTkuMTk5MiAyNC41MTE4IDE5LjUxMThDMjQuMTk5MyAxOS44MjQ0IDIzLjc3NTQgMjAgMjMuMzMzMyAyMEgxNi42NjY3QzE2LjIyNDYgMjAgMTUuODAwNyAxOS44MjQ0IDE1LjQ4ODIgMTkuNTExOEMxNS4xNzU2IDE5LjE5OTIgMTUgMTguNzc1MyAxNSAxOC4zMzMzVjE1WiIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIxLjQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPjwvc3ZnPg==", "label": "Orchestrator Agent", "shape": "circularImage", "size": 40, "title": "\u003cb\u003eOrchestrator Agent\u003c/b\u003e\u003cbr\u003e\u7a2e\u5225: orchestrator\u003cbr\u003e\u9001\u4fe1\u547c\u3073\u51fa\u3057\u6570: 8\u003cbr\u003e\u53d7\u4fe1\u547c\u3073\u51fa\u3057\u6570: 0"}, {"borderWidth": 2, "borderWidthSelected": 4, "color": {"background": "#A738D6", "border": "#A738D6", "highlight": {"background": "#A738D6", "border": "#ffffff"}, "hover": {"background": "#A738D6", "border": "#ffffff"}}, "font": {"color": "#ffffff"}, "id": "llm_us_anthropic_claude_sonnet_4_2", "image": "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB4PSIwLjUiIHk9IjAuNSIgd2lkdGg9IjIzIiBoZWlnaHQ9IjIzIiByeD0iMy41IiBmaWxsPSIjRjVEREZGIi8+PHJlY3QgeD0iMC41IiB5PSIwLjUiIHdpZHRoPSIyMyIgaGVpZ2h0PSIyMyIgcng9IjMuNSIgc3Ryb2tlPSIjQTczOEQ2IiBzdHJva2UtZGFzaGFycmF5PSIyIDIiLz48ZyBjbGlwLXBhdGg9InVybCgjY3QpIj48cGF0aCBkPSJNOS41IDEwLjk5OTlIMTFWOS40OTk5M0w5LjI1IDcuNzQ5OTNDOS44MDk4MiA3LjQ4MjU2IDEwLjQzODggNy4zOTUzMyAxMS4wNTAyIDcuNTAwMjRDMTEuNjYxNyA3LjYwNTE1IDEyLjIyNTUgNy44OTcwNCAxMi42NjQyIDguMzM1NzFDMTMuMTAyOSA4Ljc3NDM5IDEzLjM5NDggOS4zMzgyOCAxMy40OTk3IDkuOTQ5NzNDMTMuNjA0NiAxMC41NjEyIDEzLjUxNzQgMTEuMTkwMSAxMy4yNSAxMS43NDk5TDE2LjI1IDE0Ljc0OTlDMTYuNDQ4OSAxNC45NDg4IDE2LjU2MDcgMTUuMjE4NiAxNi41NjA3IDE1LjQ5OTlDMTYuNTYwNyAxNS43ODEyIDE2LjQ0ODkgMTYuMDUxIDE2LjI1IDE2LjI0OTlDMTYuMDUxMSAxNi40NDg4IDE1Ljc4MTMgMTYuNTYwNiAxNS41IDE2LjU2MDZDMTUuMjE4NyAxNi41NjA2IDE0Ljk0ODkgMTYuNDQ4OCAxNC43NSAxNi4yNDk5TDExLjc1IDEzLjI0OTlDMTEuMTkwMiAxMy41MTczIDEwLjU2MTMgMTMuNjA0NSA5Ljk0OTggMTMuNDk5NkM5LjMzODM1IDEzLjM5NDcgOC43NzQ0NyAxMy4xMDI4IDguMzM1NzkgMTIuNjY0MUM3Ljg5NzExIDEyLjIyNTUgNy42MDUyMiAxMS42NjE2IDcuNTAwMzEgMTEuMDUwMUM3LjM5NTQxIDEwLjQzODcgNy40ODI2NCA5LjgwOTc0IDcuNzUgOS4yNDk5M0w5LjUgMTAuOTk5OVoiIHN0cm9rZT0iYmxhY2siIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPjwvZz48ZGVmcz48Y2xpcFBhdGggaWQ9ImN0Ij48cmVjdCB3aWR0aD0iMTIiIGhlaWdodD0iMTIiIGZpbGw9IndoaXRlIiB0cmFuc2Zvcm09InRyYW5zbGF0ZSg2IDYpIi8+PC9jbGlwUGF0aD48L2RlZnM+PC9zdmc+", "label": "Amazon Bedrock\n(us.anthropic.claude-sonnet-4-20250514-v1:0)", "shape": "image", "size": 26, "title": "\u003cb\u003eAmazon Bedrock\u003cbr\u003e(us.anthropic.claude-sonnet-4-20250514-v1:0)\u003c/b\u003e\u003cbr\u003e\u7a2e\u5225: llm\u003cbr\u003e\u9001\u4fe1\u547c\u3073\u51fa\u3057\u6570: 0\u003cbr\u003e\u53d7\u4fe1\u547c\u3073\u51fa\u3057\u6570: 10"}, {"borderWidth": 2, "borderWidthSelected": 4, "color": {"background": "#FFDD00", "border": "#FFDD00", "highlight": {"background": "#FFDD00", "border": "#ffffff"}, "hover": {"background": "#FFDD00", "border": "#ffffff"}}, "font": {"color": "#ffffff"}, "id": "mcp_server_1", "image": "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHJ4PSI0IiBmaWxsPSIjRkZERDAwIi8+PGcgY2xpcC1wYXRoPSJ1cmwoI2MpIj48cGF0aCBkPSJNMTQuMTM2MyAzLjAxNzU4QzE0LjE1MzEgMy4wMjkyNSAxNC4xNTk4IDMuMDQ5MDQgMTQuMTcwNCAzLjA1MTQxQzE0LjU3MjggMy4xNDExNiAxNC45NDE2IDMuMzA1NzQgMTUuMjc4NyAzLjU0MjkyQzE1LjY1NSAzLjgwNzYxIDE1Ljk2NjggNC4xMzEzOCAxNi4yMDE4IDQuNTI4OEMxNi4zOTM4IDQuODUzNjIgMTYuNTI5NyA1LjIwMTQ1IDE2LjU4MjYgNS41NzI2OUMxNi42MjAxIDUuODM1NTcgMTYuNjEyNyA2LjEwNTAyIDE2LjYyMTcgNi4zNzE2NkMxNi42MjM0IDYuNDIxNzQgMTYuNjA3OSA2LjQ3MjQgMTYuNjAxNCA2LjUxNTU2QzE2LjcwMzkgNi41MTU1NiAxNi43OTc3IDYuNTEzNjcgMTYuODkxMyA2LjUxNTk3QzE3LjA2NTggNi41MjAyNSAxNy4yNDE5IDYuNTEzNjkgMTcuNDE0MSA2LjUzNjEzQzE3LjYxNTggNi41NjI0MSAxNy44MTU2IDYuNjA4MzggMTguMDEzNCA2LjY1NzUyQzE4LjI2NDMgNi43MTk4NSAxOC40OTMyIDYuODM3MTkgMTguNzE2NCA2Ljk2NTMxQzE5LjAzMDkgNy4xNDU4IDE5LjI5MDUgNy4zOTMxOCAxOS41Mjk0IDcuNjU5NjRDMTkuNzY3MyA3LjkyNTE1IDE5Ljk0OTUgOC4yMzA5OSAyMC4wNjYzIDguNTY5MjVDMjAuMTM3IDguNzc0MSAyMC4yMDU4IDguOTgzNTEgMjAuMjM4NSA5LjE5NjU0QzIwLjI3NDYgOS40MzE1MyAyMC4yOTM2IDkuNjY5OTMgMjAuMjY2NiA5LjkxMjY3QzIwLjIzNjggMTAuMTgwMSAyMC4xOTI2IDEwLjQ0MTMgMjAuMTA0MSAxMC42OTQ5QzE5Ljk4MzUgMTEuMDQwMiAxOS44MjQyIDExLjM2ODIgMTkuNTc0NSAxMS42MzYzQzE5LjIyIDEyLjAxNjkgMTguODQ3OCAxMi4zODExIDE4LjQ4MTcgMTIuNzUwOEMxOC40MDIxIDEyLjgzMTIgMTguMzE0MyAxMi45MDMzIDE4LjIzMzcgMTIuOTgyOEMxNy43MTcyIDEzLjQ5MjEgMTcuMjAyIDE0LjAwMjggMTYuNjg1NiAxNC41MTIyQzE2LjM4NiAxNC44MDc2IDE2LjA4NDkgMTUuMTAxNSAxNS43ODQ1IDE1LjM5NjFDMTUuNDgyMSAxNS42OTI3IDE1LjE3OTUgMTUuOTg5MyAxNC44NzcxIDE2LjI4NkMxNC41NzQ2IDE2LjU4MjYgMTQuMjcyMiAxNi44NzkzIDEzLjk2OTcgMTcuMTc1OUMxMy42NjkzIDE3LjQ3MDUgMTMuMzY5MyAxNy43NjU1IDEzLjA2ODEgMTguMDU5M0MxMi45OTEzIDE4LjEzNDIgMTIuOTA4OCAxOC4yMDMzIDEyLjgzMjUgMTguMjc4NkMxMi43MjY4IDE4LjM4MjggMTIuNzI4IDE4LjUwMzcgMTIuODM0OSAxOC42MDkyQzEzLjE5MjggMTguOTYyMyAxMy41NTE5IDE5LjMxNDIgMTMuOTEwMSAxOS42NjdDMTQuMDE0OSAxOS43NzAyIDE0LjEyNDggMTkuODY5MiAxNC4yMjA4IDE5Ljk4MDJDMTQuMzg3IDIwLjE3MjIgMTQuMzc0NiAyMC41Mzg5IDE0LjIxMDMgMjAuNzMzNEMxNC4wNjQ1IDIwLjkwNiAxMy44ODExIDIwLjk5MDQgMTMuNjU3MyAyMC45ODE0QzEzLjQ5NjIgMjAuOTc0OSAxMy4zNTE4IDIwLjkxNTMgMTMuMjM2NSAyMC44MDI0QzEyLjc4OTMgMjAuMzY0NiAxMi4zNDU5IDE5LjkyMyAxMS44OTg5IDE5LjQ4NTFDMTEuNzY4NSAxOS4zNTczIDExLjY1ODYgMTkuMjE1NSAxMS41ODc0IDE5LjA0OEMxMS40ODIyIDE4LjgwMDYgMTEuNDMzIDE4LjU0NjQgMTEuNDY4NiAxOC4yNzI2QzExLjUwNDUgMTcuOTk2NyAxMS42MDM0IDE3Ljc1NDMgMTEuNzcxNyAxNy41MzY4QzExLjc4NzUgMTcuNTE2MyAxMS44MDQxIDE3LjQ5NjIgMTEuODIyNCAxNy40Nzc5QzEyLjA1ODIgMTcuMjQxNCAxMi4yOTMzIDE3LjAwNDIgMTIuNTMwOSAxNi43Njk1QzEyLjg0MjYgMTYuNDYxNCAxMy4xNTYzIDE2LjE1NTIgMTMuNDY5MyAxNS44NDg0QzEzLjc0MjYgMTUuNTgwNSAxNC4wMTY0IDE1LjMxMzIgMTQuMjg5NSAxNS4wNDUzQzE0LjYyNTkgMTQuNzE1MyAxNC45NjE1IDE0LjM4NDUgMTUuMjk4MiAxNC4wNTQ4QzE1LjUxNSAxMy44NDI0IDE1LjczMzggMTMuNjMyIDE1Ljk1MDQgMTMuNDE5M0MxNi4zMzQzIDEzLjA0MjUgMTYuNzE2OSAxMi42NjQ0IDE3LjEwMDUgMTIuMjg3M0MxNy40MDQ3IDExLjk4ODIgMTcuNzA5IDExLjY4OTMgMTguMDE0MyAxMS4zOTEzQzE4LjE1NCAxMS4yNTUgMTguMyAxMS4xMjUgMTguNDM2IDEwLjk4NTJDMTguNzI1NCAxMC42ODc4IDE4LjkxMDUgMTAuMzM4MiAxOC45NjE4IDkuOTIwOTFDMTkuMDI2OSA5LjM5MTU4IDE4Ljg5MjkgOC45MjM1MiAxOC41NTY2IDguNTA4ODZDMTguMjcxMiA4LjE1Njk0IDE3LjkwNzcgNy45MjkyNCAxNy40NzI1IDcuODIxMzZDMTcuMjQ0NyA3Ljc2NDkyIDE3LjAxMDIgNy43Njg3NCAxNi43NzUyIDcuNzk2NjZDMTYuNDIxMiA3LjgzODcxIDE2LjExNDYgNy45ODYwMyAxNS44MzMzIDguMTk0NTdDMTUuNzY2MiA4LjI0NDI5IDE1LjcwNjEgOC4zMDQwOSAxNS42NDY2IDguMzYzMTNDMTUuMzk3IDguNjEwNzggMTUuMTUwMSA4Ljg2MTAzIDE0LjkwMDEgOS4xMDgxOUMxNC41ODIyIDkuNDIyNTIgMTQuMjYyMiA5LjczNDgzIDEzLjk0MzEgMTAuMDQ3OUMxMy42NDY5IDEwLjMzODUgMTMuMzUwNiAxMC42Mjg5IDEzLjA1NDQgMTAuOTE5NEMxMi43NDE1IDExLjIyNjMgMTIuNDI4NiAxMS41MzMzIDEyLjExNTcgMTEuODQwMkMxMS44MTUzIDEyLjEzNDggMTEuNTE0OSAxMi40MjkzIDExLjIxNDUgMTIuNzIzOUMxMC45MDU4IDEzLjAyNjcgMTAuNTk2NCAxMy4zMjg5IDEwLjI4ODYgMTMuNjMyNkMxMC4wNDMgMTMuODc0OSA5LjczMjExIDEzLjkxNTkgOS40NTc0MiAxMy43Njg5QzkuMDkyNjQgMTMuNTczNyA5LjAyNjg3IDEzLjA4NjcgOS4zMDM4MSAxMi43OTA2QzkuNDUzODEgMTIuNjMwMyA5LjYxMjY0IDEyLjQ3ODEgOS43NjkxNSAxMi4zMjM5QzEwLjA3MyAxMi4wMjQ1IDEwLjM3ODEgMTEuNzI2MiAxMC42ODI2IDExLjQyNzVDMTAuOTg3MiAxMS4xMjg4IDExLjI5MTcgMTAuODMwMSAxMS41OTYzIDEwLjUzMTRDMTEuOTAzIDEwLjIzMDcgMTIuMjA5NyA5LjkyOTk5IDEyLjUxNjQgOS42MjkyN0MxMi44MTY4IDkuMzM0NyAxMy4xMTcyIDkuMDQwMTYgMTMuNDE3NiA4Ljc0NTU2QzEzLjcyNjMgOC40NDI3NSAxNC4wMzQ1IDguMTM5NCAxNC4zNDM5IDcuODM3MjRDMTQuNDk0IDcuNjkwNjMgMTQuNjUwNyA3LjU1MDQ4IDE0Ljc5NjUgNy4zOTk4MkMxNS4wNjc4IDcuMTE5NTIgMTUuMjM5NSA2Ljc4OTI2IDE1LjMwNzMgNi40MDAyMUMxNS4zOTg2IDUuODc2NDggMTUuMjY4IDUuNDA1ODUgMTQuOTU5OSA0Ljk5MjIxQzE0LjY3OTcgNC42MTYgMTQuMjk5OCA0LjM2NjEzIDEzLjgyNzYgNC4yODQzNEMxMy42NjY5IDQuMjU2NTIgMTMuNTAxOCA0LjIyNTc5IDEzLjM0MDggNC4yMzQ4MkMxMi45MzkgNC4yNTczNiAxMi41Njk4IDQuMzg2MzYgMTIuMjUxIDQuNjM5ODVDMTIuMTg1NCA0LjY5MTk3IDEyLjEyNDEgNC43NDk4NyAxMi4wNjQyIDQuODA4NTRDMTEuNzExMyA1LjE1NDE3IDExLjM1OTYgNS41MDEwMiAxMS4wMDcxIDUuODQ3MDZDMTAuNzI1NiA2LjEyMzMzIDEwLjQ0MzUgNi4zOTg4OSAxMC4xNjE5IDYuNjc1MDJDOS44NDA2NCA2Ljk5MDEyIDkuNTE5NjcgNy4zMDU1NiA5LjE5ODQ0IDcuNjIwNzNDOC44OTgxMSA3LjkxNTM5IDguNTk3NiA4LjIwOTg2IDguMjk3MjMgOC41MDQ0NkM3Ljk4ODQ5IDguODA3MjcgNy42Nzk4MiA5LjExMDE1IDcuMzcxMTEgOS40MTI5OEM3LjA2ODY3IDkuNzA5NjYgNi43NjYyMiAxMC4wMDYzIDYuNDYzNzUgMTAuMzAzQzYuMTU3MSAxMC42MDM4IDUuODUwNzEgMTAuOTA0OCA1LjU0MzY3IDExLjIwNTFDNS4zMjI0OCAxMS40MjE1IDUuMTAyMzcgMTEuNjM5IDQuODc4MjYgMTEuODUyM0M0LjU5OTIgMTIuMTE3OSA0LjE5MzQ4IDEyLjExMzYgMy45MzY2IDExLjg1MTRDMy42ODY1MiAxMS41OTYxIDMuNjkzNzEgMTEuMjE5OSAzLjkzODcxIDEwLjk2ODVDNC4zMDE4IDEwLjU5NiA0LjY3ODExIDEwLjIzNjMgNS4wNDk1IDkuODcxODhDNS4yODI4OSA5LjY0Mjg2IDUuNTE4MTIgOS40MTU3MSA1Ljc1MTUyIDkuMTg2NjlDNi4xMjA4MyA4LjgyNDMxIDYuNDg5MDUgOC40NjA4MyA2Ljg1ODE3IDguMDk4MjZDNy4xNDE2MSA3LjgxOTg1IDcuNDI1ODQgNy41NDIyNiA3LjcwOTQ4IDcuMjY0MDVDOC4wMzQ5NCA2Ljk0NDgzIDguMzYwMDUgNi42MjUyNCA4LjY4NTQ3IDYuMzA1OTdDOC45Nzk1NCA2LjAxNzQ4IDkuMjczODcgNS43MjkyNyA5LjU2OCA1LjQ0MDg1QzkuODc2NzYgNS4xMzgwNiAxMC4xODUyIDQuODM0OSAxMC40OTQyIDQuNTMyNDFDMTAuNzI3OSA0LjMwMzY5IDEwLjk1NzcgNC4wNzA3NiAxMS4xOTc5IDMuODQ5MDNDMTEuNDAzMSAzLjY1OTYgMTEuNjI2MiAzLjQ5MjQ0IDExLjg3NDkgMy4zNjAzOEMxMi4xNDA3IDMuMjE5MyAxMi40MTYzIDMuMTA4NjUgMTIuNzExNyAzLjA0ODgxQzEyLjcxOTIgMy4wNDczIDEyLjcyNDggMy4wMzYzNSAxMi43MjYgMy4wMjM2OUMxMy4xODk4IDMuMDE3NTggMTMuNjU4OSAzLjAxNzU4IDE0LjEzNjMgMy4wMTc1OFoiIGZpbGw9ImJsYWNrIi8+PHBhdGggZD0iTTE1LjEzMzMgMTIuNDA4N0MxNC45NDY2IDEyLjU5NTQgMTQuNzY1NCAxMi43Nzg3IDE0LjU4MTkgMTIuOTU5N0MxNC4yNTMzIDEzLjI4NCAxMy45MjM0IDEzLjYwNyAxMy41OTM5IDEzLjkzMDRDMTMuMjkxNiAxNC4yMjcxIDEyLjk4OTUgMTQuNTI0MSAxMi42ODY2IDE0LjgyMDJDMTIuNDkwNSAxNS4wMTE4IDEyLjI5OTEgMTUuMjA5IDEyLjA5NDggMTUuMzkxNUMxMS43MDA1IDE1Ljc0MzUgMTEuMjU0MiAxNi4wMDI2IDEwLjczNiAxNi4xMzM2QzEwLjQ5IDE2LjE5NTggMTAuMjQzNyAxNi4yMjg4IDkuOTkwMzcgMTYuMjM5QzkuNTI3ODUgMTYuMjU3NSA5LjA4NDY5IDE2LjE3NTcgOC42NTgyMiAxNi4wMDU1QzguMzU2NzEgMTUuODg1MiA4LjA4MjUxIDE1LjcxNTEgNy44MzIwNyAxNS41MDYyQzcuNTM5NzMgMTUuMjYyMyA3LjI4OTk5IDE0Ljk4MTkgNy4xMDM5NyAxNC42NTA0QzYuOTQzMjYgMTQuMzYzOSA2LjgxMDM1IDE0LjA2MjggNi43NjM2MyAxMy43MzQyQzYuNzMwMTMgMTMuNDk4NSA2LjY5Mzc4IDEzLjI1OTkgNi42OTYyNyAxMy4wMjMxQzYuNzAwMTUgMTIuNjU0NiA2Ljc3OTI4IDEyLjI5NjIgNi45MTg4NyAxMS45NTI0QzcuMDg3OTIgMTEuNTM2MSA3LjMzNDUgMTEuMTc0NCA3LjY1OTI0IDEwLjg2MzZDNy44NjIzMyAxMC42NjkyIDguMDU2NjYgMTAuNDY1NyA4LjI1Njc4IDEwLjI2ODFDOC41ODExNyA5Ljk0NzkxIDguOTA2ODYgOS42MjkwMSA5LjIzMjQ0IDkuMzFDOS40ODA2MiA5LjA2Njg0IDkuNzI5OTIgOC44MjQ4MiA5Ljk3NzkyIDguNTgxNDhDMTAuMzM4OCA4LjIyNzM2IDEwLjY5ODggNy44NzIyOSAxMS4wNTk1IDcuNTE4MDRDMTEuMzQwOSA3LjI0MTc3IDExLjYyMyA2Ljk2NjMgMTEuOTA0NSA2LjY5MDE5QzEyLjIzMiA2LjM2ODk2IDEyLjU1NyA2LjA0NTA3IDEyLjg4NzggNS43MjczM0MxMi45OTU1IDUuNjIzODcgMTMuMTA5IDUuNTI2MTUgMTMuMjYzNiA1LjQ4NjgzQzEzLjY1NDkgNS4zODcyOCAxNC4wNjc2IDUuNjY1MDIgMTQuMDc1MSA2LjA4NEMxNC4wNzg2IDYuMjc2MTcgMTQuMDA4NiA2LjQzMzMyIDEzLjg3NDMgNi41NjY1NkMxMy43MDU4IDYuNzMzNjUgMTMuNTM5NyA2LjkwMzAyIDEzLjM3MDcgNy4wNjk1NkMxMy4wNzExIDcuMzY0ODQgMTIuNzcgNy42NTg3IDEyLjQ2OTcgNy45NTMyMkMxMi4xNjcyIDguMjQ5NzkgMTEuODY0OCA4LjU0NjQ1IDExLjU2MjQgOC44NDMwNEMxMS4yNjIgOS4xMzc1NyAxMC45NjE2IDkuNDMyMDQgMTAuNjYxMyA5LjcyNjU4QzEwLjM1NjcgMTAuMDI1MiAxMC4wNTIyIDEwLjMyMzkgOS43NDc3MSAxMC42MjI2QzkuNDQzMiAxMC45MjEyIDkuMTQzNTggMTEuMjI1MSA4LjgzMjQgMTEuNTE2N0M4LjYzNDA2IDExLjcwMjUgOC40Mzc1NCAxMS44ODY1IDguMjg2NjggMTIuMTE1NUM4LjEzMjUgMTIuMzQ5NCA4LjA0Njc5IDEyLjYwNDggOC4wMDgwOCAxMi44ODExQzcuOTcwNjUgMTMuMTQ4MiA3Ljk5OTA1IDEzLjQwNjMgOC4wNzg0NyAxMy42NjE2QzguMTc4MjEgMTMuOTgyMiA4LjM1NDY3IDE0LjI1NTIgOC42MDE4MiAxNC40Nzk2QzguODc2NDkgMTQuNzI4OSA5LjIwMTQ5IDE0Ljg4OTkgOS41NjYwOSAxNC45NUM5Ljk3NjQ4IDE1LjAxNzcgMTAuMzgwMSAxNC45Njg5IDEwLjc1MDkgMTQuNzczNEMxMC45MTc2IDE0LjY4NTQgMTEuMDc1NyAxNC41Njk5IDExLjIxNDEgMTQuNDQxNUMxMS41Mzk2IDE0LjEzOTUgMTEuODUwNiAxMy44MjIxIDEyLjE2NzggMTMuNTExM0MxMi40MjAyIDEzLjI2NDEgMTIuNjczNiAxMy4wMTc4IDEyLjkyNTggMTIuNzcwNEMxMy4yODI1IDEyLjQyMDQgMTMuNjM4MyAxMi4wNjk1IDEzLjk5NDkgMTEuNzE5NEMxNC4yNzIxIDExLjQ0NzIgMTQuNTUwMiAxMS4xNzU5IDE0LjgyNzUgMTAuOTAzOUMxNS4xNTkxIDEwLjU3ODYgMTUuNDkwMiAxMC4yNTI2IDE1LjgyMiA5LjkyNzRDMTYuMDY2IDkuNjg4MyAxNi4zMTE1IDkuNDUwODQgMTYuNTU0OSA5LjIxMTE5QzE2Ljg5OTggOC44NzE2NCAxNy40MjQ3IDguOTg1NjUgMTcuNjE0NSA5LjM0NDM3QzE3LjczNzMgOS41NzY0NyAxNy42OTggOS44OTg5NyAxNy41MDU1IDEwLjA4OUMxNy4xMDQgMTAuNDg1MyAxNi43MDIyIDEwLjg4MTMgMTYuMjk5OSAxMS4yNzdDMTYuMDA0MiAxMS41Njc4IDE1LjcwODEgMTEuODU4NCAxNS40MTEyIDEyLjE0OEMxNS4zMjE3IDEyLjIzNTIgMTUuMjI4OSAxMi4zMTkgMTUuMTMzMyAxMi40MDg3WiIgZmlsbD0iYmxhY2siLz48L2c+PGRlZnM+PGNsaXBQYXRoIGlkPSJjIj48cmVjdCB3aWR0aD0iMTgiIGhlaWdodD0iMTgiIGZpbGw9IndoaXRlIiB0cmFuc2Zvcm09InRyYW5zbGF0ZSgzIDMpIi8+PC9jbGlwUGF0aD48L2RlZnM+PC9zdmc+", "label": "MCP Server 1\n(Restaurant Search)", "shape": "image", "size": 24, "title": "\u003cb\u003eMCP Server 1\u003cbr\u003e(Restaurant Search)\u003c/b\u003e\u003cbr\u003e\u7a2e\u5225: mcp_server\u003cbr\u003e\u9001\u4fe1\u547c\u3073\u51fa\u3057\u6570: 0\u003cbr\u003e\u53d7\u4fe1\u547c\u3073\u51fa\u3057\u6570: 4"}]);
+                  edges = new vis.DataSet([{"arrows": {"to": {"enabled": true, "scaleFactor": 1.2}}, "color": {"color": "#88aacc", "highlight": "#ffffff"}, "font": {"align": "top", "color": "#ccddee", "size": 10}, "from": "a2a_agent_1", "label": "1x", "title": "LLM\u003cbr\u003e\u547c\u3073\u51fa\u3057\u6570: 1", "to": "llm_anthropic_claude_3_5_sonnet_20", "width": 1}, {"arrows": {"to": {"enabled": true, "scaleFactor": 1.2}}, "color": {"color": "#88aacc", "highlight": "#ffffff"}, "font": {"align": "top", "color": "#ccddee", "size": 10}, "from": "a2a_agent_1", "label": "6x", "title": "LLM\u003cbr\u003e\u547c\u3073\u51fa\u3057\u6570: 6", "to": "llm_us_anthropic_claude_sonnet_4_2", "width": 3}, {"arrows": {"to": {"enabled": true, "scaleFactor": 1.2}}, "color": {"color": "#88aacc", "highlight": "#ffffff"}, "font": {"align": "top", "color": "#ccddee", "size": 10}, "from": "a2a_agent_1", "label": "4x", "title": "MCP\n(finding_michelin_restaurants)\u003cbr\u003e\u547c\u3073\u51fa\u3057\u6570: 4", "to": "mcp_server_1", "width": 2}, {"arrows": {"to": {"enabled": true, "scaleFactor": 1.2}}, "color": {"color": "#88aacc", "highlight": "#ffffff"}, "font": {"align": "top", "color": "#ccddee", "size": 10}, "from": "agent_Strands Agents", "label": "3x", "title": "LLM\u003cbr\u003e\u547c\u3073\u51fa\u3057\u6570: 3", "to": "llm_anthropic_claude_3_5_sonnet_20", "width": 2}, {"arrows": {"to": {"enabled": true, "scaleFactor": 1.2}}, "color": {"color": "#88aacc", "highlight": "#ffffff"}, "font": {"align": "top", "color": "#ccddee", "size": 10}, "from": "orchestrator", "label": "4x", "title": "LLM\u003cbr\u003e\u547c\u3073\u51fa\u3057\u6570: 4", "to": "llm_anthropic_claude_3_5_sonnet_20", "width": 2}, {"arrows": {"to": {"enabled": true, "scaleFactor": 1.2}}, "color": {"color": "#88aacc", "highlight": "#ffffff"}, "font": {"align": "top", "color": "#ccddee", "size": 10}, "from": "orchestrator", "label": "4x", "title": "LLM\u003cbr\u003e\u547c\u3073\u51fa\u3057\u6570: 4", "to": "llm_us_anthropic_claude_sonnet_4_2", "width": 2}]);
+
+                  nodeColors = {};
+                  allNodes = nodes.get({ returnType: "Object" });
+                  for (nodeId in allNodes) {
+                    nodeColors[nodeId] = allNodes[nodeId].color;
+                  }
+                  allEdges = edges.get({ returnType: "Object" });
+                  // adding nodes and edges to the graph
+                  data = {nodes: nodes, edges: edges};
+
+                  var options = {"physics": {"enabled": true, "solver": "barnesHut", "barnesHut": {"gravitationalConstant": -12000, "centralGravity": 0.25, "springLength": 250, "springConstant": 0.035, "damping": 0.12, "avoidOverlap": 0.8}, "stabilization": {"iterations": 300}}, "interaction": {"hover": true, "tooltipDelay": 150, "navigationButtons": true, "keyboard": true}, "edges": {"smooth": {"type": "curvedCW", "roundness": 0.2}}};
+
+                  
+
+
+                  
+
+                  network = new vis.Network(container, data, options);
+
+                  
+
+                  
+
+                  
+
+
+                  
+
+                  return network;
+
+              }
+              drawGraph();
+        </script>
+    </body>
+</html>

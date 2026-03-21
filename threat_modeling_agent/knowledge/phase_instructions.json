@@ -1,0 +1,172 @@
+{
+  "phase_0": {
+    "title": "Architecture Parsing",
+    "description": "対象システムのアーキテクチャ記述を構造化して理解する。後続フェーズの適用可否判断の根拠となる情報を抽出する。",
+    "entry_question": null,
+    "threats": [],
+    "extraction_targets": [
+      "コンポーネント一覧（エージェント、MCPサーバー、ストレージ、外部API、LLMモデル等）",
+      "エージェント間の通信フロー（A2A、MCP、REST等）",
+      "記憶機構の有無と種類（短期コンテキスト、長期DB、ベクトルDB等）",
+      "ツール・コード実行の有無と種類",
+      "認証・認可の仕組み（OAuth、RBAC、NHI、APIキー等）",
+      "人間の関与パターン（HITL の有無・頻度・承認フロー）",
+      "マルチエージェント構成の有無（オーケストレーター、サブエージェント等）",
+      "外部サービス・データソースへの依存"
+    ],
+    "skip_condition": null,
+    "playbook": null
+  },
+  "phase_1": {
+    "title": "Planning & Reasoning Threats",
+    "description": "エージェントの自律的な計画・推論機能に起因する脅威を評価する。",
+    "entry_question": "このシステムのエージェントは自律的に計画・推論ステップを決定するか？",
+    "entry_question_yes_signals": [
+      "LLMベースの推論エンジンを使用している",
+      "ReActパターン（推論→行動→観察のループ）を採用している",
+      "自己評価・自己修正ループ（Reflection, Self-Critic）がある",
+      "サブゴール分解・計画生成を行う",
+      "連鎖的な思考（Chain of Thought）で行動を決定する"
+    ],
+    "entry_question_no_signals": [
+      "固定フロー（FSMやルールベース）のみで動作する",
+      "LLMが推論を行わず、テンプレート応答のみを行う",
+      "人間が全ての判断ステップを明示的に制御する"
+    ],
+    "threats": ["T6", "T7", "T8"],
+    "skip_condition": "エージェントが固定フロー（FSM等）のみで動作し、LLMによる自律推論を行わない場合",
+    "playbook": "Playbook 1: Preventing AI Agent reasoning manipulation",
+    "key_evaluation_points": [
+      "プロンプトインジェクション経路（ユーザー入力、ツール出力、外部データ）の存在",
+      "エージェントのゴール・プランの変更可能性",
+      "行動の監査ログ・トレースの有無",
+      "自己改変・反省ループの制御機構の有無"
+    ]
+  },
+  "phase_2": {
+    "title": "Memory Threats",
+    "description": "エージェントの短期・長期記憶機構に起因する脅威を評価する。",
+    "entry_question": "このシステムのエージェントは意思決定に記憶（短期または長期）を使用するか？",
+    "entry_question_yes_signals": [
+      "セッション履歴・会話コンテキストを保持する",
+      "長期記憶ストレージ（DB、ファイル等）を使用する",
+      "ベクトルDB・RAGによる知識検索を行う",
+      "複数セッションをまたいで情報を保持する",
+      "共有メモリをエージェント間で利用する"
+    ],
+    "entry_question_no_signals": [
+      "完全にステートレスで、各リクエストが独立している",
+      "過去の情報を一切参照しない"
+    ],
+    "threats": ["T1", "T5"],
+    "skip_condition": "エージェントが完全にステートレスで記憶機構を持たない場合",
+    "playbook": "Playbook 2: Preventing Memory Poisoning & AI Knowledge Corruption",
+    "key_evaluation_points": [
+      "記憶への書き込み権限の制御",
+      "共有メモリへのアクセス制御（マルチユーザー・マルチエージェント）",
+      "記憶内容の検証・サニタイゼーション機構",
+      "ベクトルDB・RAGインデックスへの書き込み制御"
+    ]
+  },
+  "phase_3": {
+    "title": "Tool & Execution Threats",
+    "description": "エージェントがツール・コマンド・外部API・コードを実行することに起因する脅威を評価する。",
+    "entry_question": "このシステムのエージェントはツール・システムコマンド・外部API・コード生成・実行を行うか？",
+    "entry_question_yes_signals": [
+      "MCPサーバー経由でツールを呼び出す",
+      "A2Aプロトコルで他エージェントに処理を委譲する",
+      "外部APIを呼び出す",
+      "コードを生成・実行する（Pythonインタープリタ、シェル等）",
+      "ファイルシステム・DBへの読み書きを行う",
+      "メール・メッセージ送信等の外部アクションを行う"
+    ],
+    "entry_question_no_signals": [
+      "テキスト生成のみで、外部アクションを一切行わない"
+    ],
+    "threats": ["T2", "T4", "T11", "T17"],
+    "skip_condition": "エージェントがテキスト生成のみで外部アクションを一切行わない場合（T17はサプライチェーン依存があれば常に適用）",
+    "playbook": "Playbook 3: Securing AI Tool Execution & Preventing Unauthorized Actions Across Supply Chains",
+    "key_evaluation_points": [
+      "ツールの呼び出し権限とスコープの設定",
+      "MCPサーバーからの応答内容の検証",
+      "A2A委譲のスコープ制限",
+      "コード実行のサンドボックス化",
+      "使用ライブラリ・フレームワーク・モデルのサプライチェーン管理",
+      "リソース消費の上限設定（レート制限、タイムアウト）"
+    ]
+  },
+  "phase_4": {
+    "title": "Authentication & Identity Threats",
+    "description": "エージェントの認証・認可・アイデンティティ管理に起因する脅威を評価する。",
+    "entry_question": "このシステムはユーザー・ツール・サービス・他エージェントの認証を行うか？",
+    "entry_question_yes_signals": [
+      "OAuth・JWT・APIキー等で認証を行う",
+      "ロールベースアクセス制御（RBAC）を実装している",
+      "非人間ID（NHI）・サービスアカウント・マシンアカウントを使用する",
+      "エージェントが固有のIDを持ち他システムと通信する",
+      "認証情報を環境変数・シークレットストアで管理する"
+    ],
+    "entry_question_no_signals": [
+      "認証が一切なく完全にオープンなシステム（その場合はリスクとして記録）"
+    ],
+    "threats": ["T3", "T9"],
+    "skip_condition": "認証機構が存在しない場合（ただし認証不在自体をリスクとして記録すること）",
+    "playbook": "Playbook 4: Strengthening Authentication, Identity & Privilege Controls",
+    "key_evaluation_points": [
+      "最小権限原則の適用状況",
+      "NHI（非人間ID）のライフサイクル管理",
+      "エージェントIDの永続性と取り消し可能性",
+      "クロスシステムでの権限継承の制御",
+      "Confused Deputy問題への対策"
+    ]
+  },
+  "phase_5": {
+    "title": "Human Interaction Threats",
+    "description": "人間との直接インタラクション・人間監視機構に起因する脅威を評価する。",
+    "entry_question": "このシステムの機能達成に人間の関与（承認・レビュー・インタラクション）が必要か？",
+    "entry_question_yes_signals": [
+      "人間による承認ステップ（HITL）が存在する",
+      "ユーザーが直接エージェントと会話・指示する",
+      "エージェントがユーザーに推奨・提案を行い人間が判断する",
+      "監査・コンプライアンスのために人間レビューが必要"
+    ],
+    "entry_question_no_signals": [
+      "完全自律で人間の関与が一切不要なシステム"
+    ],
+    "threats": ["T10", "T15"],
+    "skip_condition": "人間の関与が一切ないフルオートメーションシステムの場合",
+    "playbook": "Playbook 5: Protecting HITL & Preventing Threats Rooted in Human Interaction",
+    "key_evaluation_points": [
+      "承認インターフェースの操作可能性",
+      "ユーザーへの表示情報のフィルタリング・検証",
+      "エージェント応答へのユーザーの信頼度",
+      "大量リクエストによる認知過負荷のリスク"
+    ]
+  },
+  "phase_6": {
+    "title": "Multi-Agent System Threats",
+    "description": "複数エージェントが連携するアーキテクチャに起因する脅威を評価する。",
+    "entry_question": "このシステムは複数のエージェントが相互作用するか？",
+    "entry_question_yes_signals": [
+      "オーケストレーター・サブエージェント構成を持つ",
+      "A2Aプロトコルでエージェント間通信を行う",
+      "MCPを通じて複数エージェントがツールを共有する",
+      "エージェントが他のエージェントにタスクを委譲する",
+      "複数エージェントが同一の記憶・データストアを共有する"
+    ],
+    "entry_question_no_signals": [
+      "単一エージェントのみで構成されている"
+    ],
+    "threats": ["T12", "T13", "T14", "T16"],
+    "skip_condition": "単一エージェントのみで構成され、エージェント間通信が存在しない場合",
+    "playbook": "Playbook 6: Securing Multi-Agent Communication & Trust Mechanisms",
+    "key_evaluation_points": [
+      "エージェント間通信の認証・暗号化",
+      "Rogue Agentの検出・隔離機構",
+      "エージェント間の信頼境界の定義",
+      "MCPサーバー・A2Aエンドポイントの入力検証",
+      "タスク委譲のスコープ制限",
+      "エージェント間メッセージの改ざん検知"
+    ]
+  }
+}

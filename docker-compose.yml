@@ -1,0 +1,194 @@
+services:
+
+  # ---------------------------------------------------------------------------
+  # MCP Gateways（MCP サーバーのデータを集約して A2A エージェントに提供）
+  # ---------------------------------------------------------------------------
+
+  mcp-gateway-1:
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp-gateway-1
+    ports:
+      - "8010:8010"
+    environment:
+      LOCAL_GW_1_PORT: "8010"
+      OTEL_TRACES_EXPORTER: "none"
+      AGENTOPS_LOGGING_TO_FILE: "false"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('localhost',8010),timeout=5); s.close()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: on-failure
+
+  mcp-gateway-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp-gateway-2
+    ports:
+      - "8020:8020"
+    environment:
+      LOCAL_GW_2_PORT: "8020"
+      OTEL_TRACES_EXPORTER: "none"
+      AGENTOPS_LOGGING_TO_FILE: "false"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('localhost',8020),timeout=5); s.close()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: on-failure
+
+  # ---------------------------------------------------------------------------
+  # A2A Agents
+  # ---------------------------------------------------------------------------
+
+  a2a-agent-1:
+    build:
+      context: broken_a2a_agent_1
+    ports:
+      - "9011:9011"
+    environment:
+      AGENT_PORT: "9011"
+      AGENTCORE_RUNTIME_URL: "http://a2a-agent-1:9011/"
+      AWS_AGENTCORE_GW_1_URL: "http://mcp-gateway-1:8010/mcp"
+      AWS_BEDROCK_MODEL_ID: "${AWS_BEDROCK_MODEL_ID}"
+      AWS_BEDROCK_AGENT_MODEL_ID: "${AWS_BEDROCK_AGENT_MODEL_ID}"
+      AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-us-west-2}"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
+      AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
+      OTEL_TRACES_EXPORTER: "none"
+      AGENTOPS_LOGGING_TO_FILE: "false"
+    depends_on:
+      mcp-gateway-1:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9011/ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: on-failure
+
+  a2a-agent-2:
+    build:
+      context: broken_a2a_agent_2
+    ports:
+      - "9012:9012"
+    environment:
+      AGENT_PORT: "9012"
+      AGENTCORE_RUNTIME_URL: "http://a2a-agent-2:9012/"
+      AWS_AGENTCORE_GW_2_URL: "http://mcp-gateway-2:8020/mcp"
+      AWS_BEDROCK_MODEL_ID: "${AWS_BEDROCK_MODEL_ID}"
+      AWS_BEDROCK_AGENT_MODEL_ID: "${AWS_BEDROCK_AGENT_MODEL_ID}"
+      AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-us-west-2}"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
+      AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
+      OTEL_TRACES_EXPORTER: "none"
+      AGENTOPS_LOGGING_TO_FILE: "false"
+    depends_on:
+      mcp-gateway-2:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9012/ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: on-failure
+
+  rogue-a2a-agent-1:
+    build:
+      context: rogue_a2a_agent_1
+    ports:
+      - "9003:9003"
+    environment:
+      AGENT_PORT: "9003"
+      AGENTCORE_RUNTIME_URL: "http://rogue-a2a-agent-1:9003/"
+      AWS_AGENTCORE_GW_2_URL: "http://mcp-gateway-2:8020/mcp"
+      AWS_BEDROCK_MODEL_ID: "${AWS_BEDROCK_MODEL_ID}"
+      AWS_BEDROCK_AGENT_MODEL_ID: "${AWS_BEDROCK_AGENT_MODEL_ID}"
+      AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-us-west-2}"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
+      AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
+      OTEL_TRACES_EXPORTER: "none"
+      AGENTOPS_LOGGING_TO_FILE: "false"
+    depends_on:
+      mcp-gateway-2:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9003/ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: on-failure
+
+  # ---------------------------------------------------------------------------
+  # Orchestrator
+  # ---------------------------------------------------------------------------
+
+  orchestrator:
+    build:
+      context: broken_a2a_orchestrator_1
+    ports:
+      - "8080:8080"
+    environment:
+      AWS_A2A_SERVER_RUNTIME_1_URL: "http://a2a-agent-1:9011/"
+      AWS_A2A_SERVER_RUNTIME_2_URL: "http://a2a-agent-2:9012/"
+      AWS_A2A_SERVER_RUNTIME_3_URL: "http://rogue-a2a-agent-1:9003/"
+      AWS_BEDROCK_MODEL_ID: "${AWS_BEDROCK_MODEL_ID}"
+      AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-us-west-2}"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
+      AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
+      OTEL_TRACES_EXPORTER: "none"
+      AGENTOPS_LOGGING_TO_FILE: "false"
+    depends_on:
+      a2a-agent-1:
+        condition: service_healthy
+      a2a-agent-2:
+        condition: service_healthy
+      rogue-a2a-agent-1:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: on-failure
+
+  # ---------------------------------------------------------------------------
+  # Dashboard（Streamlit）
+  # ---------------------------------------------------------------------------
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: dashboard/Dockerfile
+    ports:
+      - "8501:8501"
+    environment:
+      AWS_A2A_SERVER_ORCHESTRATOR_URL: "http://orchestrator:8080"
+      AWS_A2A_SERVER_RUNTIME_1_URL: "http://a2a-agent-1:9011/"
+      AWS_A2A_SERVER_RUNTIME_2_URL: "http://a2a-agent-2:9012/"
+      AWS_A2A_SERVER_RUNTIME_3_URL: "http://rogue-a2a-agent-1:9003/"
+      AWS_BEDROCK_MODEL_ID: "${AWS_BEDROCK_MODEL_ID}"
+      AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-us-west-2}"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
+      AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
+      BEDROCK_GUARDRAIL_ID: "${BEDROCK_GUARDRAIL_ID:-}"
+      BEDROCK_GUARDRAIL_VERSION: "${BEDROCK_GUARDRAIL_VERSION:-}"
+      LANGFUSE_PUBLIC_KEY: "${LANGFUSE_PUBLIC_KEY:-}"
+      LANGFUSE_SECRET_KEY: "${LANGFUSE_SECRET_KEY:-}"
+      LANGFUSE_BASE_URL: "${LANGFUSE_BASE_URL:-https://us.cloud.langfuse.com}"
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+    restart: on-failure

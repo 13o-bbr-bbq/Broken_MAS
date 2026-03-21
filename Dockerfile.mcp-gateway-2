@@ -1,0 +1,17 @@
+FROM python:3.12-slim
+WORKDIR /app
+
+# ゲートウェイが importlib 経由でインポートする MCP サーバー 3/4/rogue の依存パッケージをインストール
+COPY broken_mcp_server_3/requirements.txt requirements_mcp3.txt
+COPY broken_mcp_server_4/requirements.txt requirements_mcp4.txt
+COPY rogue_mcp_server_1/requirements.txt requirements_mcp_rogue.txt
+RUN pip install --no-cache-dir -r requirements_mcp3.txt -r requirements_mcp4.txt -r requirements_mcp_rogue.txt
+
+# ゲートウェイ本体と MCP サーバーファイル（importlib でロードするため同梱）
+COPY local_mcp_gateway_2.py .
+COPY broken_mcp_server_3/ broken_mcp_server_3/
+COPY broken_mcp_server_4/ broken_mcp_server_4/
+COPY rogue_mcp_server_1/ rogue_mcp_server_1/
+
+EXPOSE 8020
+CMD ["python", "local_mcp_gateway_2.py"]

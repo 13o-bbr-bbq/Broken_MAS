@@ -1,0 +1,4 @@
+strands-agents
+fastmcp
+python-dotenv
+boto3

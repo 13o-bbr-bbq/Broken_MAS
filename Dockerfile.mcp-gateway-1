@@ -1,0 +1,15 @@
+FROM python:3.12-slim
+WORKDIR /app
+
+# ゲートウェイが importlib 経由でインポートする MCP サーバー 1/2 の依存パッケージをインストール
+COPY broken_mcp_server_1/requirements.txt requirements_mcp1.txt
+COPY broken_mcp_server_2/requirements.txt requirements_mcp2.txt
+RUN pip install --no-cache-dir -r requirements_mcp1.txt -r requirements_mcp2.txt
+
+# ゲートウェイ本体と MCP サーバーファイル（importlib でロードするため同梱）
+COPY local_mcp_gateway_1.py .
+COPY broken_mcp_server_1/ broken_mcp_server_1/
+COPY broken_mcp_server_2/ broken_mcp_server_2/
+
+EXPOSE 8010
+CMD ["python", "local_mcp_gateway_1.py"]
