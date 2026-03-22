@@ -1,9 +1,8 @@
 """
 Visualization ページ
 
-Langfuse に蓄積された OTEL トレース（動的）または
-AgentCore から取得したトポロジー（静的）を
-インタラクティブグラフで表示する。
+docker-compose.yml（ローカル静的）または Langfuse OTEL トレース（動的）から
+MAS トポロジーをインタラクティブグラフで表示する。
 """
 
 from __future__ import annotations
@@ -30,8 +29,7 @@ from visualization.visualize_traces import (
     build_graph,
 )
 from dashboard.topology_utils import (
-    build_graph_from_schema,
-    merge_agentcore_and_langfuse_schema,
+    build_graph_from_compose,
     render_graph_to_html,
 )
 
@@ -41,7 +39,9 @@ from dashboard.topology_utils import (
 # ---------------------------------------------------------------------------
 
 st.title("🕸️ MAS Topology Visualization")
-st.caption("Langfuse（動的）/ AgentCore（静的）/ Hybrid（統合）のトポロジーを可視化します。")
+st.caption(
+    "Docker Compose（ローカル静的）または Langfuse（動的）から MAS トポロジーを可視化します。"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +97,55 @@ def _fetch_traces(lf, limit: int, from_timestamp=None) -> list:
         page += 1
 
     return traces[:limit]
+
+
+@st.cache_data(ttl=3600, show_spinner="docker-compose.yml からトポロジーを生成中...")
+def _generate_compose_topology(
+    compose_path: str,
+    repo_root: str,
+    no_physics: bool,
+) -> dict:
+    """docker-compose.yml とソースコードから静的トポロジーを生成する。"""
+    G, schema = build_graph_from_compose(compose_path, repo_root)
+
+    if G.number_of_nodes() == 0:
+        return {
+            "source": "compose",
+            "html_content": "",
+            "node_count": 0,
+            "edge_count": 0,
+            "summary_label": "サービス数 (静的)",
+            "summary_value": 0,
+            "trace_count": 0,
+            "trace_summaries": [],
+            "schema_json": None,
+        }
+
+    html_content = render_graph_to_html(
+        G,
+        no_physics=no_physics,
+        heading_trace_count=G.number_of_nodes(),
+        heading_override="MAS Topology (Docker Compose Local)",
+    )
+
+    comps = schema.get("components") or {}
+    service_count = (
+        len(_as_list(comps.get("orchestrators")))
+        + len(_as_list(comps.get("a2a_agents")))
+        + len(_as_list(comps.get("mcp_servers")))
+    )
+
+    return {
+        "source": "compose",
+        "html_content": html_content,
+        "node_count": G.number_of_nodes(),
+        "edge_count": G.number_of_edges(),
+        "summary_label": "サービス数 (静的)",
+        "summary_value": service_count,
+        "trace_count": 0,
+        "trace_summaries": [],
+        "schema_json": schema,
+    }
 
 
 @st.cache_data(ttl=300, show_spinner="Langfuse からトレースを取得してグラフを生成中...")
@@ -167,90 +216,6 @@ def _generate_langfuse_topology(
     }
 
 
-@st.cache_data(ttl=120, show_spinner="AgentCore スキーマからグラフを生成中...")
-def _generate_agentcore_topology(
-    schema_json_text: str,
-    no_physics: bool,
-) -> dict:
-    schema = json.loads(schema_json_text)
-    G = build_graph_from_schema(schema)
-    html_content = render_graph_to_html(
-        G,
-        no_physics=no_physics,
-        heading_trace_count=max(1, G.number_of_nodes()),
-        heading_override="MAS Topology (AgentCore Static)",
-    )
-
-    comps = schema.get("components") or {}
-    runtime_count = (
-        len(_as_list(comps.get("orchestrators")))
-        + len(_as_list(comps.get("a2a_agents")))
-        + len(_as_list(comps.get("mcp_servers")))
-    )
-
-    return {
-        "source": "agentcore",
-        "html_content": html_content,
-        "node_count": G.number_of_nodes(),
-        "edge_count": G.number_of_edges(),
-        "summary_label": "Runtime 数 (静的)",
-        "summary_value": runtime_count,
-        "trace_count": 0,
-        "trace_summaries": [],
-        "schema_json": schema,
-    }
-
-
-@st.cache_data(ttl=180, show_spinner="AgentCore + Langfuse の統合トポロジーを生成中...")
-def _generate_hybrid_topology(
-    agentcore_schema_json_text: str,
-    limit: int,
-    hours: int,
-    no_physics: bool,
-    host: str,
-) -> dict:
-    agentcore_schema = json.loads(agentcore_schema_json_text)
-    lf_result = _generate_langfuse_topology(
-        limit=limit,
-        hours=hours,
-        no_physics=no_physics,
-        host=host,
-    )
-    merged_schema = merge_agentcore_and_langfuse_schema(
-        agentcore_schema=agentcore_schema,
-        langfuse_schema=lf_result.get("schema_json"),
-        trace_count=int(lf_result.get("summary_value") or 0),
-    )
-
-    G = build_graph_from_schema(merged_schema)
-    html_content = render_graph_to_html(
-        G,
-        no_physics=no_physics,
-        heading_trace_count=max(1, G.number_of_nodes()),
-        heading_override="MAS Topology (Hybrid: AgentCore + Langfuse)",
-    )
-
-    comps = merged_schema.get("components") or {}
-    runtime_count = (
-        len(_as_list(comps.get("orchestrators")))
-        + len(_as_list(comps.get("a2a_agents")))
-        + len(_as_list(comps.get("mcp_servers")))
-    )
-    trace_count = int(lf_result.get("summary_value") or 0)
-
-    return {
-        "source": "hybrid",
-        "html_content": html_content,
-        "node_count": G.number_of_nodes(),
-        "edge_count": G.number_of_edges(),
-        "summary_label": "Runtime / Trace (統合)",
-        "summary_value": f"{runtime_count} / {trace_count}",
-        "trace_count": trace_count,
-        "trace_summaries": lf_result.get("trace_summaries", []),
-        "schema_json": merged_schema,
-    }
-
-
 # ---------------------------------------------------------------------------
 # サイドバー — 設定
 # ---------------------------------------------------------------------------
@@ -260,9 +225,12 @@ with st.sidebar:
 
     data_source = st.radio(
         "トポロジーソース",
-        options=["Langfuse (動的)", "AgentCore (静的)", "Hybrid (統合)"],
+        options=["Docker Compose (ローカル)", "Langfuse (動的)"],
         index=0,
-        help="Hybrid は AgentCore 構成をベースに Langfuse 実行実績を統合します。",
+        help=(
+            "Docker Compose: リポジトリのファイル群から構成を自動解析します（Langfuse 不要）。\n"
+            "Langfuse: 実行ログから動的にトポロジーを生成します。"
+        ),
     )
 
     no_physics = st.checkbox(
@@ -275,7 +243,16 @@ with st.sidebar:
     hours = 24
     host = os.environ.get("LANGFUSE_HOST", "https://us.cloud.langfuse.com")
 
-    if data_source in ("Langfuse (動的)", "Hybrid (統合)"):
+    if data_source == "Docker Compose (ローカル)":
+        st.divider()
+        compose_file = os.path.join(_REPO_ROOT, "docker-compose.yml")
+        st.caption("解析対象ファイル:")
+        st.code(compose_file, language=None)
+        st.caption(
+            "docker-compose.yml のサービス定義・環境変数・Dockerfile を静的解析して "
+            "トポロジーを生成します。Langfuse は不要です。"
+        )
+    else:  # Langfuse
         st.divider()
         st.subheader("Langfuse 取得設定")
 
@@ -292,14 +269,6 @@ with st.sidebar:
             "Langfuse ホスト",
             value=os.environ.get("LANGFUSE_HOST", "https://us.cloud.langfuse.com"),
         )
-    elif data_source == "AgentCore (静的)":
-        st.caption(
-            "AgentCore Topology ページで取得済みの静的スキーマを表示します。"
-        )
-    else:
-        st.caption(
-            "AgentCore Topology の静的スキーマと Langfuse の動的フローを統合表示します。"
-        )
 
     generate = st.button("表示を更新", type="primary", use_container_width=True)
 
@@ -314,15 +283,29 @@ if "viz_result_source" not in st.session_state:
     st.session_state.viz_result_source = None
 
 source_map = {
+    "Docker Compose (ローカル)": "compose",
     "Langfuse (動的)": "langfuse",
-    "AgentCore (静的)": "agentcore",
-    "Hybrid (統合)": "hybrid",
 }
 source_key = source_map[data_source]
 source_changed = st.session_state.viz_result_source != source_key
 
 if generate or st.session_state.viz_result is None or source_changed:
-    if source_key == "langfuse":
+    if source_key == "compose":
+        compose_path = os.path.join(_REPO_ROOT, "docker-compose.yml")
+        if not os.path.exists(compose_path):
+            st.error(f"docker-compose.yml が見つかりません: {compose_path}")
+            st.stop()
+        try:
+            st.session_state.viz_result = _generate_compose_topology(
+                compose_path=compose_path,
+                repo_root=_REPO_ROOT,
+                no_physics=no_physics,
+            )
+            st.session_state.viz_result_source = source_key
+        except Exception as e:
+            st.error(f"Docker Compose トポロジー生成エラー: {e}")
+            st.stop()
+    else:  # langfuse
         try:
             st.session_state.viz_result = _generate_langfuse_topology(
                 limit=limit,
@@ -338,38 +321,6 @@ if generate or st.session_state.viz_result is None or source_changed:
         except RuntimeError as e:
             st.error(f"グラフ生成エラー: {e}")
             st.stop()
-    elif source_key == "agentcore":
-        agentcore_schema = st.session_state.get("agentcore_schema")
-        if not agentcore_schema:
-            st.warning("AgentCore Topology ページで先に構成情報を取得してください。")
-            st.stop()
-
-        st.session_state.viz_result = _generate_agentcore_topology(
-            schema_json_text=json.dumps(agentcore_schema, ensure_ascii=False, sort_keys=True),
-            no_physics=no_physics,
-        )
-        st.session_state.viz_result_source = source_key
-    else:
-        agentcore_schema = st.session_state.get("agentcore_schema")
-        if not agentcore_schema:
-            st.warning("Hybrid 表示には AgentCore Topology ページの構成情報が必要です。")
-            st.stop()
-        try:
-            st.session_state.viz_result = _generate_hybrid_topology(
-                agentcore_schema_json_text=json.dumps(agentcore_schema, ensure_ascii=False, sort_keys=True),
-                limit=limit,
-                hours=hours,
-                no_physics=no_physics,
-                host=host,
-            )
-            st.session_state.viz_result_source = source_key
-        except EnvironmentError as e:
-            st.error(f"環境変数エラー: {e}")
-            st.info("LANGFUSE_PUBLIC_KEY と LANGFUSE_SECRET_KEY を設定してから再試行してください。")
-            st.stop()
-        except RuntimeError as e:
-            st.error(f"統合グラフ生成エラー: {e}")
-            st.stop()
 
 result = st.session_state.viz_result
 html_content = result.get("html_content", "")
@@ -381,10 +332,8 @@ trace_summaries = result.get("trace_summaries", [])
 trace_count = int(result.get("trace_count", 0))
 schema_json = result.get("schema_json")
 
-if result.get("source") == "langfuse" and schema_json:
+if schema_json:
     st.session_state.viz_schema = schema_json
-if result.get("source") == "hybrid" and schema_json:
-    st.session_state.hybrid_schema = schema_json
 
 
 # ---------------------------------------------------------------------------
@@ -392,15 +341,13 @@ if result.get("source") == "hybrid" and schema_json:
 # ---------------------------------------------------------------------------
 
 if not html_content:
-    if source_key == "langfuse":
+    if source_key == "compose":
+        st.warning("docker-compose.yml から描画できるコンポーネントが見つかりませんでした。")
+    else:
         st.warning(
             "指定した条件でトレースが見つかりませんでした。\n"
             "取得件数・時間範囲・Langfuse ホストを確認してください。"
         )
-    elif source_key == "agentcore":
-        st.warning("AgentCore スキーマから描画できるコンポーネントが見つかりませんでした。")
-    else:
-        st.warning("Hybrid 統合結果から描画できるコンポーネントが見つかりませんでした。")
     st.stop()
 
 
@@ -414,11 +361,7 @@ col2.metric("コンポーネント数 (ノード)", node_count)
 col3.metric("通信経路数 (エッジ)", edge_count)
 with col4:
     if schema_json:
-        schema_file = {
-            "langfuse": "system_schema.json",
-            "agentcore": "agentcore_schema.json",
-            "hybrid": "hybrid_schema.json",
-        }[source_key]
+        schema_file = "compose_schema.json" if source_key == "compose" else "system_schema.json"
         st.download_button(
             label="スキーマ JSON をダウンロード",
             data=json.dumps(schema_json, ensure_ascii=False, indent=2),
@@ -427,12 +370,10 @@ with col4:
             help="Threat Modeling ページでも利用できます。",
         )
 
-if source_key == "langfuse":
-    st.caption("現在表示中: Langfuse の動的トポロジー")
-elif source_key == "agentcore":
-    st.caption("現在表示中: AgentCore の静的トポロジー")
+if source_key == "compose":
+    st.caption("現在表示中: Docker Compose ローカル静的トポロジー")
 else:
-    st.caption("現在表示中: Hybrid（AgentCore + Langfuse）統合トポロジー")
+    st.caption("現在表示中: Langfuse の動的トポロジー")
 
 st.divider()
 
@@ -450,7 +391,7 @@ components.html(html_content, height=820, scrolling=False)
 # トレース一覧（Langfuse 時のみ）
 # ---------------------------------------------------------------------------
 
-if source_key in ("langfuse", "hybrid"):
+if source_key == "langfuse":
     st.divider()
     with st.expander(f"取得トレース一覧 ({trace_count} 件)", expanded=False):
         if trace_summaries:
