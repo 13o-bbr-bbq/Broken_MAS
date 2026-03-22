@@ -11,6 +11,12 @@ Chat ページ
   Streamlit のバックグラウンドスレッドは ScriptRunContext を持たないため
   st.session_state には直接書き込めない。result_box dict をスレッドに渡し、
   メインスレッドのポーリング時に転記する（CLAUDE.md 参照）。
+
+セッション管理:
+  chat_session_id はページロード時に1度だけ UUID を生成し、同一会話内で
+  維持する。「チャット履歴をクリア」時のみ新しい UUID を発行する。
+  オーケストレーター側で同一 session_id の Agent インスタンスをキャッシュ
+  するため、マルチターン会話コンテキストが保持される。
 """
 
 from __future__ import annotations
@@ -30,6 +36,7 @@ from pathlib import Path
 import boto3
 import requests
 import streamlit as st
+import streamlit.components.v1 as _components
 
 _REPO_ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
 sys.path.insert(0, _REPO_ROOT)
@@ -41,6 +48,13 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _ASSET_DIR = Path(__file__).parent.parent / "assets"
+
+_SAMPLE_PROMPTS = [
+    ("🔍 ホテル検索", "東京のホテルを探してください"),
+    ("⭐ おすすめ", "おすすめのホテルを教えてください"),
+    ("🎁 特別プラン", "パートナー特別プランを教えてください"),
+    ("📝 レビュー＋予約", "ハーバーグランドお台場のレビューを見て、そのまま予約して"),
+]
 
 
 @st.cache_resource
@@ -167,6 +181,17 @@ def _get_progress_events(session_id: str) -> list[dict]:
     return events
 
 
+def _get_progress_events_remote(orchestrator_url: str, session_id: str) -> list[dict]:
+    """オーケストレーターの /progress/{session_id} API からイベントを取得する（Docker モード用）。"""
+    try:
+        url = orchestrator_url.rstrip("/") + f"/progress/{session_id}"
+        resp = requests.get(url, timeout=5)
+        resp.raise_for_status()
+        return resp.json().get("events", [])
+    except Exception:
+        return []
+
+
 def _build_agent_name_map() -> dict[str, str]:
     """環境変数から A2A エージェント URL → 表示名マッピングを構築する。"""
     pairs = [
@@ -189,7 +214,6 @@ def _agent_name_from_url(url: str) -> str:
     url = url.rstrip("/")
     if url in _AGENT_NAME_MAP:
         return _AGENT_NAME_MAP[url]
-    # ポート番号で簡易マッチ
     import re
     m = re.search(r":(\d+)$", url)
     return f"Agent (:{m.group(1)})" if m else url
@@ -197,7 +221,6 @@ def _agent_name_from_url(url: str) -> str:
 
 def _extract_message_text(inp: dict) -> str:
     """A2A ツール入力から送信メッセージのテキストを抽出する。"""
-    # よく使われるフィールド名を順に試す
     for key in ("message", "message_text", "content", "text", "user_message"):
         val = inp.get(key)
         if val:
@@ -228,7 +251,6 @@ def _render_steering_event(ev: dict) -> None:
 def _render_tool_event(ev: dict) -> None:
     """ツール呼び出しイベントを Streamlit に描画する。"""
     tool = ev.get("tool", "")
-    # target_url / message_text はオーケストレーター側で抽出済み（部分 JSON からも）
     target_url = ev.get("target_url") or ""
     message_text = ev.get("message_text") or ""
 
@@ -242,7 +264,6 @@ def _render_tool_event(ev: dict) -> None:
             if message_text:
                 st.caption(f"送信内容: 「{message_text}」")
         else:
-            # URL がまだストリーミングされていない（初期の数チャンク）
             st.markdown(f"**🔧 エージェントを呼び出し中...** *(準備中)*")
     else:
         st.markdown(f"**🔧 ツール実行中: `{tool}`**")
@@ -293,7 +314,6 @@ def _run_invoke(
     session_id: str,
     guardrail_id: str = "",
     guardrail_version: str = "",
-    # region は Guardrail 用に引き続き使用
 ) -> None:
     """
     バックグラウンドスレッドで実行する。
@@ -319,7 +339,6 @@ def _run_invoke(
         )
         resp.raise_for_status()
         data = resp.json()
-        # result フィールドをそのまま保持（dict または文字列）
         result_box["response"] = data.get("result", data)
         result_box["error"] = None
 
@@ -344,6 +363,56 @@ def _run_invoke(
         result_box["done"] = True  # 完了シグナルは最後に立てる
 
 
+def _send_message(
+    prompt: str,
+    orchestrator_url: str,
+    region: str,
+    request_timeout: int,
+) -> None:
+    """送信フロー共通処理。chat_input とサンプルカードの両方から呼ぶ。"""
+    if not orchestrator_url:
+        st.error("サイドバーでオーケストレーター URL を設定してください。")
+        st.stop()
+
+    # INPUT Guardrail チェック（ON の場合のみ）
+    if st.session_state.guardrail_enabled:
+        _gid = st.session_state.guardrail_id
+        _gver = st.session_state.guardrail_version
+        if not _gid:
+            st.error("Guardrail ID を入力してください。")
+            st.stop()
+        try:
+            _blocked, _reason = _check_guardrail(prompt, "INPUT", _gid, _gver, region)
+        except Exception as exc:
+            st.error(f"Guardrail エラー: {exc}")
+            st.stop()
+        if _blocked:
+            st.session_state.chat_messages.append({"role": "user", "content": prompt})
+            st.session_state.chat_messages.append({
+                "role": "assistant",
+                "content": f"🛡️ Guardrail によりブロックされました（INPUT）:\n{_reason}",
+            })
+            st.rerun()
+
+    st.session_state.chat_messages.append({"role": "user", "content": prompt})
+
+    # 会話内で同一の session_id を維持する（マルチターン対応）
+    session_id = st.session_state.chat_session_id
+    result_box: dict = {"done": False, "response": None, "error": None}
+    st.session_state.chat_result_box = result_box
+    st.session_state.chat_sending = True
+
+    _gid = st.session_state.guardrail_id if st.session_state.guardrail_enabled else ""
+    _gver = st.session_state.guardrail_version if st.session_state.guardrail_enabled else ""
+    thread = threading.Thread(
+        target=_run_invoke,
+        args=(orchestrator_url, prompt, region, request_timeout, result_box, session_id, _gid, _gver),
+        daemon=True,
+    )
+    thread.start()
+    st.rerun()
+
+
 # ---------------------------------------------------------------------------
 # セッションステート初期化
 # ---------------------------------------------------------------------------
@@ -356,7 +425,10 @@ if "chat_sending" not in st.session_state:
 if "chat_result_box" not in st.session_state:
     st.session_state.chat_result_box = None
 if "chat_session_id" not in st.session_state:
-    st.session_state.chat_session_id = None
+    # ページロード時に1度だけ UUID を生成し、会話全体で使い回す
+    st.session_state.chat_session_id = str(uuid.uuid4())
+if "chat_pending_prompt" not in st.session_state:
+    st.session_state.chat_pending_prompt = None
 if "guardrail_enabled" not in st.session_state:
     st.session_state.guardrail_enabled = False
 if "guardrail_id" not in st.session_state:
@@ -386,7 +458,6 @@ if st.session_state.chat_sending:
                 }
             )
         else:
-            # レスポンスから text フィールドを抽出してから保存する
             st.session_state.chat_messages.append(
                 {"role": "assistant", "content": _extract_text(result_box["response"])}
             )
@@ -494,6 +565,8 @@ with st.sidebar:
         st.session_state.chat_messages = []
         st.session_state.chat_sending = False
         st.session_state.chat_result_box = None
+        # 新しいセッション開始（オーケストレーター側のキャッシュとも切り離す）
+        st.session_state.chat_session_id = str(uuid.uuid4())
         st.rerun()
 
     st.divider()
@@ -502,6 +575,10 @@ with st.sidebar:
         "1. 環境変数 (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`)\n"
         "2. `~/.aws/credentials`"
     )
+
+    # ── セッション ID（デバッグ用）────────────────────────────────────
+    st.divider()
+    st.caption(f"Session ID: `{st.session_state.chat_session_id[:8]}...`")
 
 # ---------------------------------------------------------------------------
 # チャット表示エリア
@@ -520,25 +597,56 @@ if st.session_state.chat_messages or st.session_state.chat_sending:
         ),
         unsafe_allow_html=True,
     )
+    # 自動スクロール: 新メッセージ到着時に最下部へ移動
+    _components.html(
+        """
+        <script>
+          (function() {
+            function scrollToBottom() {
+              var doc = window.parent.document;
+              var main = doc.querySelector('section[data-testid="stMain"]') ||
+                         doc.querySelector('.main') ||
+                         doc.documentElement;
+              if (main) { main.scrollTop = main.scrollHeight; }
+            }
+            setTimeout(scrollToBottom, 100);
+          })();
+        </script>
+        """,
+        height=1,
+    )
 else:
+    # 空チャット時: 案内テキスト + サンプルプロンプトカード
     st.markdown(
-        "<div style='color:#94a3b8;text-align:center;padding:60px 0;font-size:15px;'>"
+        "<div style='color:#94a3b8;text-align:center;padding:40px 0 16px;font-size:15px;'>"
         "メッセージを入力してチャットを開始してください"
         "</div>",
         unsafe_allow_html=True,
     )
+    cols = st.columns(len(_SAMPLE_PROMPTS))
+    for col, (label, sample) in zip(cols, _SAMPLE_PROMPTS):
+        with col:
+            if st.button(label, key=f"sample_{label}", use_container_width=True, help=sample):
+                st.session_state.chat_pending_prompt = sample
+                st.rerun()
 
 # ---------------------------------------------------------------------------
-# 進捗表示（ローカルモード限定）
+# 進捗表示（送信中のみ）
 #
-# オーケストレーター URL が localhost / 127.0.0.1 の場合のみ、
-# /tmp/mas_progress/{session_id}.jsonl をポーリングして途中経過を表示する。
+# localhost / 127.x の場合はファイルを直接読み取り、
+# Docker 環境（orchestrator:8080 等）の場合は /progress/{session_id} API をポーリング。
 # ---------------------------------------------------------------------------
 
-_is_local = orchestrator_url.startswith("http://localhost") or orchestrator_url.startswith("http://127.")
+if st.session_state.chat_sending and st.session_state.chat_session_id:
+    _is_local = (
+        orchestrator_url.startswith("http://localhost")
+        or orchestrator_url.startswith("http://127.")
+    )
+    if _is_local:
+        events = _get_progress_events(st.session_state.chat_session_id)
+    else:
+        events = _get_progress_events_remote(orchestrator_url, st.session_state.chat_session_id)
 
-if st.session_state.chat_sending and st.session_state.chat_session_id and _is_local:
-    events = _get_progress_events(st.session_state.chat_session_id)
     if events:
         with st.expander("🤔 エージェントの思考過程（処理中）", expanded=True):
             for ev in events:
@@ -555,6 +663,18 @@ if st.session_state.chat_sending and st.session_state.chat_session_id and _is_lo
                     )
 
 # ---------------------------------------------------------------------------
+# サンプルカードクリック時の pending_prompt 処理
+#
+# st.button は押した直後の再描画でのみ True を返すため、
+# chat_pending_prompt 経由で値を次の描画ループに持ち越す。
+# ---------------------------------------------------------------------------
+
+_pending = st.session_state.get("chat_pending_prompt")
+if _pending and not st.session_state.chat_sending:
+    st.session_state.chat_pending_prompt = None
+    _send_message(_pending, orchestrator_url, region, request_timeout)
+
+# ---------------------------------------------------------------------------
 # チャット入力
 # ---------------------------------------------------------------------------
 
@@ -562,51 +682,7 @@ if prompt := st.chat_input(
     "メッセージを入力してください...",
     disabled=st.session_state.chat_sending,
 ):
-    # ── 入力検証 ──────────────────────────────────────────────────────
-    if not orchestrator_url:
-        st.error("サイドバーでオーケストレーター URL を設定してください。")
-        st.stop()
-
-    # ── INPUT Guardrail チェック（ON の場合のみ）─────────────────────
-    if st.session_state.guardrail_enabled:
-        _gid = st.session_state.guardrail_id
-        _gver = st.session_state.guardrail_version
-        if not _gid:
-            st.error("Guardrail ID を入力してください。")
-            st.stop()
-        try:
-            _blocked, _reason = _check_guardrail(prompt, "INPUT", _gid, _gver, region)
-        except Exception as exc:
-            st.error(f"Guardrail エラー: {exc}")
-            st.stop()
-        if _blocked:
-            st.session_state.chat_messages.append({"role": "user", "content": prompt})
-            st.session_state.chat_messages.append({
-                "role": "assistant",
-                "content": f"🛡️ Guardrail によりブロックされました（INPUT）:\n{_reason}",
-            })
-            st.rerun()
-
-    # ── ユーザーメッセージを履歴に追加 ────────────────────────────────
-    st.session_state.chat_messages.append({"role": "user", "content": prompt})
-
-    # ── バックグラウンドスレッドで /invocations を呼び出す ──────────────
-    session_id = str(uuid.uuid4())
-    result_box: dict = {"done": False, "response": None, "error": None}
-    st.session_state.chat_result_box = result_box
-    st.session_state.chat_session_id = session_id
-    st.session_state.chat_sending = True
-
-    _gid = st.session_state.guardrail_id if st.session_state.guardrail_enabled else ""
-    _gver = st.session_state.guardrail_version if st.session_state.guardrail_enabled else ""
-    thread = threading.Thread(
-        target=_run_invoke,
-        args=(orchestrator_url, prompt, region, request_timeout, result_box, session_id, _gid, _gver),
-        daemon=True,
-    )
-    thread.start()
-
-    st.rerun()
+    _send_message(prompt, orchestrator_url, region, request_timeout)
 
 # ---------------------------------------------------------------------------
 # ポーリング（表示エリアとチャット入力を描画した後に sleep → rerun）

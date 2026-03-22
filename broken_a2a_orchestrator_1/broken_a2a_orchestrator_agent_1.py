@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import re as _re
@@ -299,49 +300,118 @@ steering_handler = LoggingSteeringHandler(
 )
 
 
+# ---------------------------------------------------------------------------
+# セッション別 Agent キャッシュ（マルチターン会話対応）
+#
+# 同一 session_id の呼び出しでは Agent インスタンスを再利用することで
+# Agent 内部の messages 履歴が保持され、会話コンテキストが維持される。
+# TTL を超えたセッションは自動削除してメモリリークを防ぐ。
+# ---------------------------------------------------------------------------
+
+_UUID_RE = _re.compile(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+)
+_session_agents: dict[str, dict] = {}
+_SESSION_TTL = 1800  # 30分
+
+
+def _cleanup_expired_sessions() -> None:
+    """期限切れセッションを削除してメモリリークを防ぐ。"""
+    now = time.time()
+    expired = [
+        sid for sid, meta in _session_agents.items()
+        if now - meta["last_used"] > _SESSION_TTL
+    ]
+    for sid in expired:
+        del _session_agents[sid]
+        logging.info("Session expired and removed: %s", sid)
+
+
 @app.post("/invocations")
 async def invoke_agent(request: Request):
     payload = await request.json()
     prompt = payload.get("prompt")
     session_id = payload.get("session_id", str(int(time.time())))
 
-    # 前回の進捗ログをクリア（通常イベント + Steering イベント）
+    # 今回ターンの進捗ログをクリア（Agent インスタンスは保持）
     (PROGRESS_DIR / f"{session_id}.jsonl").unlink(missing_ok=True)
     (PROGRESS_DIR / f"{session_id}_steering.jsonl").unlink(missing_ok=True)
 
     # ContextVar に session_id をセット（LoggingSteeringHandler が async で参照）
     token = _current_session_id.set(session_id)
 
-    httpx_client_args = {
-        "timeout": 300
-    }
+    _cleanup_expired_sessions()
 
-    # Rogue Agent URL が設定されている場合のみ追加
-    known_agent_urls = [a2s_server_1_url, a2s_server_2_url]
-    if a2s_server_3_url:
-        known_agent_urls.append(a2s_server_3_url)
+    # 同一セッションの Agent を再利用してマルチターン会話を実現
+    if session_id in _session_agents:
+        meta = _session_agents[session_id]
+        orchestrator = meta["agent"]
+        # ターンごとに新しい callback_handler を設定（進捗ログをリセット）
+        orchestrator.callback_handler = _make_callback_handler(session_id)
+        meta["last_used"] = time.time()
+    else:
+        httpx_client_args = {"timeout": 300}
+        known_agent_urls = [a2s_server_1_url, a2s_server_2_url]
+        if a2s_server_3_url:
+            known_agent_urls.append(a2s_server_3_url)
 
-    provider = A2AClientToolProvider(
-        known_agent_urls=known_agent_urls,
-        httpx_client_args=httpx_client_args
-    )
-
-    orchestrator = Agent(
-        model=BedrockModel(model_id=os.environ.get("AWS_BEDROCK_MODEL_ID")),
-        name="Orchestrator Agent",
-        description="リモートのA2Aエージェントと連携するオーケストレーター",
-        system_prompt=ORCHESTRATOR_SYSTEM_PROMPT,
-        tools=provider.tools,
-        plugins=[steering_handler],
-        callback_handler=_make_callback_handler(session_id),
-    )
+        provider = A2AClientToolProvider(
+            known_agent_urls=known_agent_urls,
+            httpx_client_args=httpx_client_args,
+        )
+        orchestrator = Agent(
+            model=BedrockModel(model_id=os.environ.get("AWS_BEDROCK_MODEL_ID")),
+            name="Orchestrator Agent",
+            description="リモートのA2Aエージェントと連携するオーケストレーター",
+            system_prompt=ORCHESTRATOR_SYSTEM_PROMPT,
+            tools=provider.tools,
+            plugins=[steering_handler],
+            callback_handler=_make_callback_handler(session_id),
+        )
+        _session_agents[session_id] = {
+            "agent": orchestrator,
+            "provider": provider,
+            "last_used": time.time(),
+        }
 
     try:
-        response = orchestrator(prompt)
+        # orchestrator(prompt) は同期ブロッキング呼び出しのため、スレッドプールで実行する。
+        # そのままイベントループで呼ぶと uvicorn のループがブロックされ、
+        # /progress ポーリングリクエストが処理できなくなる（進捗が最後に一瞬しか見えない問題）。
+        # run_in_executor は Python 3.7+ でコンテキスト（ContextVar を含む）を
+        # 自動的にコピーするため _current_session_id は正しく引き継がれる。
+        loop = asyncio.get_running_loop()
+        response = await loop.run_in_executor(None, lambda: orchestrator(prompt))
     finally:
-        _current_session_id.reset(token)  # ContextVar をリクエスト終了時にリセット
+        _current_session_id.reset(token)
 
     return JSONResponse({"result": response.message, "session_id": session_id})
+
+
+@app.get("/progress/{session_id}")
+async def get_progress(session_id: str):
+    """進捗イベントを返す（dashboard Chat ページのポーリング用）。
+
+    session_id は UUID 形式のみ受け付けてパストラバーサル攻撃を防ぐ。
+    """
+    if not _UUID_RE.match(session_id):
+        return JSONResponse({"events": []})
+
+    events = []
+    for suffix in ("", "_steering"):
+        log_file = PROGRESS_DIR / f"{session_id}{suffix}.jsonl"
+        if not log_file.exists():
+            continue
+        try:
+            for line in log_file.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line:
+                    events.append(json.loads(line))
+        except Exception:
+            pass
+
+    events.sort(key=lambda e: e.get("ts", 0))
+    return JSONResponse({"events": events})
 
 
 @app.get("/ping")
