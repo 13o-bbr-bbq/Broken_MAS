@@ -381,24 +381,13 @@ else:  # idle
     st.subheader("① スキーマソースの選択")
 
     has_viz_schema = bool(st.session_state.get("viz_schema"))
-    has_hybrid_schema = bool(st.session_state.get("hybrid_schema"))
-    has_agentcore_schema = bool(st.session_state.get("agentcore_schema"))
 
     source_options = [
-        "Hybrid (統合) の結果を使用",
         "Visualization の結果を使用",
-        "AgentCore Topology の結果を使用",
         "JSON ファイルをアップロード",
         "テキストで直接記述",
     ]
-    if has_hybrid_schema:
-        default_idx = 0
-    elif has_viz_schema:
-        default_idx = 1
-    elif has_agentcore_schema:
-        default_idx = 2
-    else:
-        default_idx = 3
+    default_idx = 0 if has_viz_schema else 1
 
     schema_source = st.radio(
         "スキーマソース",
@@ -411,16 +400,7 @@ else:  # idle
     schema_dict: dict | None = None
     system_description_text: str | None = None
 
-    if schema_source == "Hybrid (統合) の結果を使用":
-        if not has_hybrid_schema:
-            st.warning(
-                "Visualization ページで「Hybrid (統合)」を生成してからこのオプションを使用してください。"
-            )
-            st.stop()
-        schema_dict = copy.deepcopy(st.session_state.hybrid_schema)
-        st.success("Visualization ページで生成した Hybrid スキーマを読み込みました。")
-
-    elif schema_source == "Visualization の結果を使用":
+    if schema_source == "Visualization の結果を使用":
         if not has_viz_schema:
             st.warning(
                 "Visualization ページでグラフを生成してからこのオプションを使用してください。"
@@ -428,15 +408,6 @@ else:  # idle
             st.stop()
         schema_dict = copy.deepcopy(st.session_state.viz_schema)
         st.success("Visualization ページで生成したスキーマを読み込みました。")
-
-    elif schema_source == "AgentCore Topology の結果を使用":
-        if not has_agentcore_schema:
-            st.warning(
-                "AgentCore Topology ページで情報を取得してからこのオプションを使用してください。"
-            )
-            st.stop()
-        schema_dict = copy.deepcopy(st.session_state.agentcore_schema)
-        st.success("AgentCore Topology ページで取得したスキーマを読み込みました。")
 
     elif schema_source == "JSON ファイルをアップロード":
         uploaded = st.file_uploader(

@@ -324,6 +324,344 @@ def build_graph_from_schema(schema: dict) -> nx.DiGraph:
     return G
 
 
+# ---------------------------------------------------------------------------
+# Docker Compose ローカルトポロジー
+# ---------------------------------------------------------------------------
+
+#: MCP サーバーディレクトリ名 → 表示名のマッピング（このプロジェクト固有）
+_MCP_SERVER_META: dict[str, str] = {
+    "broken_mcp_server_1": "MCP Server 1 (Hotel Search)",
+    "broken_mcp_server_2": "MCP Server 2 (Hotel Details)",
+    "broken_mcp_server_3": "MCP Server 3 (Availability)",
+    "broken_mcp_server_4": "MCP Server 4 (Reservation)",
+    "rogue_mcp_server_1":  "MCP Server [Rogue] (Partner Deals)",
+}
+
+
+def _classify_compose_service(name: str) -> str | None:
+    """サービス名からコンポーネント種別を判定する。None はトポロジーから除外。"""
+    n = name.lower()
+    if "orchestrator" in n:
+        return "orchestrator"
+    if "rogue" in n and ("a2a" in n or "agent" in n):
+        return "rogue_a2a"
+    if "a2a" in n:
+        return "a2a_agent"
+    if "mcp" in n and ("gateway" in n or "gw" in n):
+        return "mcp_gateway"
+    # dashboard / nginx などインフラ系は除外
+    return None
+
+
+def _display_name_from_service(svc_name: str) -> str:
+    """サービス名（例: rogue-a2a-agent-1）を人間可読な表示名に変換する。"""
+    n = svc_name.lower()
+    is_rogue = "rogue" in n
+    prefix = "[Rogue] " if is_rogue else ""
+    suffix_m = re.search(r"(\d+)$", svc_name)
+    suffix = f" {suffix_m.group(1)}" if suffix_m else ""
+    if "orchestrator" in n:
+        return "Orchestrator"
+    if "a2a" in n and "agent" in n:
+        return f"{prefix}A2A Agent{suffix}"
+    return prefix + " ".join(p.capitalize() for p in re.split(r"[-_]", svc_name))
+
+
+def _scan_dockerfile_mcp_dirs(df_path: str) -> list[str]:
+    """Dockerfile から COPY <broken/rogue_mcp_server_N>/ 行のディレクトリ名を返す。"""
+    pattern = re.compile(r"^COPY\s+((?:broken|rogue)_mcp_server_\d+)/", re.IGNORECASE)
+    dirs: list[str] = []
+    try:
+        with open(df_path, "r", encoding="utf-8") as f:
+            for line in f:
+                m = pattern.match(line.strip())
+                if m:
+                    d = m.group(1)
+                    if d not in dirs:
+                        dirs.append(d)
+    except OSError:
+        pass
+    return dirs
+
+
+def _scan_mcp_tool_names(server_dir_path: str) -> list[str]:
+    """MCP サーバーディレクトリ内の .py ファイルから @mcp.tool(name="...") を収集する。"""
+    import glob as _glob
+
+    tools: list[str] = []
+    for py_path in _glob.glob(os.path.join(server_dir_path, "*.py")):
+        try:
+            with open(py_path, "r", encoding="utf-8") as f:
+                src = f.read()
+        except OSError:
+            continue
+        # @mcp.tool(...) ブロックを区切りとして分割し、name= を検索
+        for block in src.split("@mcp.tool")[1:]:
+            m = re.search(r'\bname\s*=\s*["\']([^"\']+)', block)
+            if m and m.group(1) not in tools:
+                tools.append(m.group(1))
+    return tools
+
+
+def _extract_url_edges(
+    services: dict,
+    svc_types: dict[str, str],
+) -> list[tuple[str, str, str]]:
+    """
+    docker-compose.yml の environment セクションの URL 値から接続エッジを抽出する。
+    Returns: [(src_service, dst_service, protocol), ...]
+    """
+    url_re = re.compile(r"^https?://([a-zA-Z0-9_-]+)(?::\d+)?(?:/.*)?$")
+    edges: list[tuple[str, str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    for svc_name, svc_cfg in services.items():
+        if svc_name not in svc_types:
+            continue
+        env = svc_cfg.get("environment") or {}
+        # リスト形式 ["KEY=value", ...] を dict に変換
+        if isinstance(env, list):
+            tmp: dict[str, str] = {}
+            for item in env:
+                if isinstance(item, str) and "=" in item:
+                    k, v = item.split("=", 1)
+                    tmp[k] = v
+            env = tmp
+
+        for env_key, env_val in env.items():
+            if not isinstance(env_val, str):
+                continue
+            m = url_re.match(env_val.strip())
+            if not m:
+                continue
+            hostname = m.group(1)
+            # Docker Compose ではサービス名がそのままホスト名になる
+            if hostname not in services or hostname == svc_name:
+                continue
+            if hostname not in svc_types:
+                continue
+            k = env_key.upper()
+            proto = "A2A" if "A2A" in k else ("MCP" if ("GW" in k or "MCP" in k) else "HTTP")
+            key = (svc_name, hostname, proto)
+            if key not in seen:
+                seen.add(key)
+                edges.append(key)
+
+    return edges
+
+
+def build_graph_from_compose(
+    compose_path: str,
+    repo_root: str | None = None,
+) -> tuple[nx.DiGraph, dict]:
+    """
+    docker-compose.yml とローカルソースコードから MAS トポロジーを構築する。
+
+    処理内容:
+      1. docker-compose.yml をパースしてサービスを分類
+      2. Dockerfile.mcp-gateway-* を解析して gateway → MCP サーバーのマッピングを取得
+      3. MCP サーバー Python ファイルを走査してツール名を収集
+      4. 環境変数の URL から接続エッジを抽出（gateway を経由するエッジは個別 MCP サーバーに展開）
+      5. NetworkX グラフと system_schema 互換 dict を生成して返す
+
+    Parameters
+    ----------
+    compose_path : str
+        docker-compose.yml のパス
+    repo_root : str | None
+        リポジトリルート（Dockerfile や MCP サーバーソースの基点）。
+        None の場合は compose_path の親ディレクトリを使用。
+
+    Returns
+    -------
+    (G, schema) : tuple[nx.DiGraph, dict]
+        G      : render_graph_to_html() に渡すグラフ
+        schema : build_graph_from_schema / Threat Modeling 互換のスキーマ dict
+    """
+    import yaml
+    from datetime import datetime, timezone
+    from pathlib import Path
+
+    compose_path_obj = Path(compose_path)
+    root = Path(repo_root) if repo_root else compose_path_obj.parent
+
+    with open(compose_path_obj, "r", encoding="utf-8") as f:
+        compose = yaml.safe_load(f)
+    services: dict = compose.get("services") or {}
+
+    # ── 1. サービス分類 ──────────────────────────────────────────────────
+    svc_types: dict[str, str] = {}
+    for svc_name in services:
+        t = _classify_compose_service(svc_name)
+        if t is not None:
+            svc_types[svc_name] = t
+
+    # ── 2. Dockerfile から gateway → sub-server ディレクトリマッピングを取得 ──
+    gateway_to_server_dirs: dict[str, list[str]] = {}
+    for svc_name, svc_type in svc_types.items():
+        if svc_type != "mcp_gateway":
+            continue
+        svc_cfg = services[svc_name]
+        build = svc_cfg.get("build") or {}
+        if isinstance(build, str):
+            df_path = str(root / build / "Dockerfile")
+        else:
+            df_name = build.get("dockerfile", "Dockerfile")
+            df_path = str(root / df_name)
+            if not os.path.exists(df_path):
+                df_path = str(root / build.get("context", ".") / "Dockerfile")
+        dirs = _scan_dockerfile_mcp_dirs(df_path)
+        if dirs:
+            gateway_to_server_dirs[svc_name] = dirs
+            logger.debug("gateway '%s' → servers: %s", svc_name, dirs)
+
+    # ── 3. 各 MCP サーバーのツール名をスキャン ─────────────────────────────
+    all_server_dirs: list[str] = sorted(
+        {d for dirs in gateway_to_server_dirs.values() for d in dirs}
+    )
+    server_tools: dict[str, list[str]] = {}
+    for srv_dir in all_server_dirs:
+        tools = _scan_mcp_tool_names(str(root / srv_dir))
+        server_tools[srv_dir] = tools
+        logger.debug("MCP server '%s' tools: %s", srv_dir, tools)
+
+    # ── 4. 環境変数からエッジを抽出 → gateway 経由を個別サーバーに展開 ────────
+    raw_edges = _extract_url_edges(services, svc_types)
+    expanded_edges: list[tuple[str, str, str]] = []
+    seen_exp: set[tuple[str, str, str]] = set()
+    for src, dst, proto in raw_edges:
+        if svc_types.get(dst) == "mcp_gateway":
+            for srv_dir in gateway_to_server_dirs.get(dst, []):
+                key = (src, srv_dir, "MCP")
+                if key not in seen_exp:
+                    seen_exp.add(key)
+                    expanded_edges.append(key)
+        else:
+            key = (src, dst, proto)
+            if key not in seen_exp:
+                seen_exp.add(key)
+                expanded_edges.append(key)
+
+    # ── 5. NetworkX グラフを構築 ────────────────────────────────────────
+    G = nx.DiGraph()
+    name_to_nid: dict[str, str] = {}
+    edge_counts_d: dict[tuple[str, str], int] = {}
+    edge_labels_d: dict[tuple[str, str], str] = {}
+
+    # エージェント系ノード（orchestrator / a2a_agent / rogue_a2a）
+    for svc_name, svc_type in svc_types.items():
+        if svc_type == "mcp_gateway":
+            continue
+        label = _display_name_from_service(svc_name)
+        node_type = "orchestrator" if svc_type == "orchestrator" else "a2a_agent"
+        prefix = "orch" if svc_type == "orchestrator" else "a2a"
+        nid = f"{prefix}_{_safe_id(svc_name)}"
+        G.add_node(nid, node_type=node_type, node_label=label)
+        name_to_nid[svc_name] = nid
+
+    # MCP サーバーノード（個別サーバー単位）
+    for srv_dir in all_server_dirs:
+        display = _MCP_SERVER_META.get(srv_dir, srv_dir)
+        tools = server_tools.get(srv_dir, [])
+        label = display + ("\n" + "\n".join(tools) if tools else "")
+        nid = f"mcp_{_safe_id(srv_dir)}"
+        G.add_node(nid, node_type="mcp_server", node_label=label)
+        name_to_nid[srv_dir] = nid
+
+    # エッジ追加
+    for src_name, dst_name, proto in expanded_edges:
+        src_nid = name_to_nid.get(src_name)
+        dst_nid = name_to_nid.get(dst_name)
+        if src_nid and dst_nid:
+            _add_edge_counted(edge_counts_d, edge_labels_d, src_nid, dst_nid, proto)
+
+    for (src_nid, dst_nid), count in edge_counts_d.items():
+        G.add_edge(
+            src_nid, dst_nid,
+            weight=count,
+            edge_label=edge_labels_d.get((src_nid, dst_nid), ""),
+        )
+
+    # ── 6. system_schema dict 生成 ─────────────────────────────────────
+    orchestrators_s: list[dict] = []
+    a2a_agents_s: list[dict] = []
+    for svc_name, svc_type in svc_types.items():
+        if svc_type == "mcp_gateway":
+            continue
+        display = _display_name_from_service(svc_name)
+        if svc_type == "orchestrator":
+            orchestrators_s.append({"name": display, "role": "Orchestrator"})
+        elif svc_type == "rogue_a2a":
+            a2a_agents_s.append({"name": display, "role": "Rogue A2A Agent"})
+        else:
+            a2a_agents_s.append({"name": display, "role": "A2A Agent"})
+
+    mcp_servers_s: list[dict] = [
+        {
+            "name": _MCP_SERVER_META.get(srv_dir, srv_dir),
+            "tools": server_tools.get(srv_dir, []),
+        }
+        for srv_dir in all_server_dirs
+    ]
+
+    # 表示名 → スキーマ名の逆引きマップ（フロー生成用）
+    name_to_display: dict[str, str] = {}
+    for svc_name, svc_type in svc_types.items():
+        if svc_type != "mcp_gateway":
+            name_to_display[svc_name] = _display_name_from_service(svc_name)
+    for srv_dir in all_server_dirs:
+        name_to_display[srv_dir] = _MCP_SERVER_META.get(srv_dir, srv_dir)
+
+    flows: list[dict] = []
+    seen_flows: set[tuple[str, str, str]] = set()
+    for src, dst, proto in expanded_edges:
+        f = name_to_display.get(src, src)
+        t = name_to_display.get(dst, dst)
+        key = (_norm_name(f), _norm_name(t), proto.upper())
+        if key not in seen_flows:
+            seen_flows.add(key)
+            flows.append({"from": f, "to": t, "protocol": proto})
+
+    all_tools = [tool for tools in server_tools.values() for tool in tools]
+    schema = {
+        "name": "Broken MAS (Docker Compose)",
+        "overview": "Multi-Agent System topology parsed from docker-compose.yml and source code.",
+        "components": {
+            "orchestrators": orchestrators_s,
+            "a2a_agents": a2a_agents_s,
+            "mcp_servers": mcp_servers_s,
+            "agents": orchestrators_s + a2a_agents_s,
+            "storage": [],
+            "external_apis": [],
+        },
+        "communication": {
+            "protocols": sorted({e[2] for e in expanded_edges}),
+            "flows": flows,
+            "encryption": None,
+        },
+        "authentication": {},
+        "memory": {},
+        "tools": {"tool_list": all_tools},
+        "multi_agent": {
+            "enabled": True,
+            "agent_count": len(orchestrators_s) + len(a2a_agents_s),
+            "architecture": "Orchestrator + A2A Agents",
+            "delegation_mechanism": "A2A protocol",
+        },
+        "schema_source": "docker_compose",
+        "notes": (
+            f"Generated from {compose_path_obj.name} at: "
+            f"{datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}"
+        ),
+    }
+
+    logger.info(
+        "build_graph_from_compose 完了: %d ノード, %d エッジ, %d mcp_servers",
+        G.number_of_nodes(), G.number_of_edges(), len(mcp_servers_s),
+    )
+    return G, schema
+
+
 def render_graph_to_html(
     G: nx.DiGraph,
     *,
