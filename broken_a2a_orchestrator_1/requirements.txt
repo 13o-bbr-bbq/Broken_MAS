@@ -1,5 +1,6 @@
 strands-agents[a2a,otel]==1.31.0
 strands-agents-tools==0.2.23
+bedrock-agentcore[strands-agents]
 fastapi
 uvicorn[standard]
 boto3

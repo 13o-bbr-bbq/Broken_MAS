@@ -5,7 +5,6 @@ import re as _re
 import tempfile
 import time
 import logging
-from contextvars import ContextVar
 from pathlib import Path
 from strands import Agent
 from strands.telemetry import StrandsTelemetry
@@ -15,6 +14,15 @@ from strands_tools.a2a_client import A2AClientToolProvider
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 import uvicorn
+
+# AgentCore Memory（AGENTCORE_MEMORY_ID が設定されている場合のみ使用）
+try:
+    from bedrock_agentcore.memory.integrations.strands.config import AgentCoreMemoryConfig
+    from bedrock_agentcore.memory.integrations.strands.session_manager import AgentCoreMemorySessionManager
+    _AGENTCORE_MEMORY_AVAILABLE = True
+except ImportError:
+    _AGENTCORE_MEMORY_AVAILABLE = False
+    logging.warning("bedrock-agentcore[strands-agents] がインストールされていません。AgentCore Memory は無効です。")
 
 # ---------------------------------------------------------------------------
 # 進捗ログ（ローカル検証用）
@@ -30,10 +38,7 @@ PROGRESS_DIR.mkdir(exist_ok=True)
 # Steering ログ
 # LLMSteeringHandler が Guide 判定を下したとき、callback_handler の _flush() と
 # 競合しないよう専用ファイル（{session_id}_steering.jsonl）に追記する。
-# ContextVar でリクエストごとの session_id を async コンテキストに伝播させる。
 # ---------------------------------------------------------------------------
-
-_current_session_id: ContextVar[str | None] = ContextVar("session_id", default=None)
 
 
 def _write_steering_guide_event(session_id: str, tool_name: str, reason: str) -> None:
@@ -55,10 +60,17 @@ def _write_steering_guide_event(session_id: str, tool_name: str, reason: str) ->
 class LoggingSteeringHandler(LLMSteeringHandler):
     """Guide 判定を進捗ログ（JSONL）に記録する LLMSteeringHandler サブクラス。
 
-    ContextVar (_current_session_id) から現在のリクエストの session_id を取得して
-    {session_id}_steering.jsonl に追記する。ファイル分離により callback_handler の
-    _flush()（"w" モード上書き）との競合を回避する。
+    session_id をインスタンス属性として保持し、Guide 判定時に
+    {session_id}_steering.jsonl に追記する。インスタンス属性はスレッド境界を
+    越えてアクセス可能なため、Strands が async フックを別スレッドで呼ぶ場合も
+    正しく session_id を参照できる。
+    セッション毎にインスタンスを生成するため、LedgerProvider の steering_context
+    もセッション間で独立する。
     """
+
+    def __init__(self, session_id: str, **kwargs):
+        super().__init__(**kwargs)
+        self._log_session_id = session_id
 
     async def steer_before_tool(self, *, agent, tool_use, **kwargs):
         action = await super().steer_before_tool(agent=agent, tool_use=tool_use, **kwargs)
@@ -74,9 +86,7 @@ class LoggingSteeringHandler(LLMSteeringHandler):
                 if isinstance(action, dict)
                 else getattr(action, "reason", "")
             )
-            session_id = _current_session_id.get()
-            if session_id:
-                _write_steering_guide_event(session_id, tool_name, reason)
+            _write_steering_guide_event(self._log_session_id, tool_name, reason)
             logging.warning(
                 "[Orchestrator Steering GUIDE] tool=%s reason=%s",
                 tool_name,
@@ -206,6 +216,23 @@ a2s_server_1_url = os.environ.get('AWS_A2A_SERVER_RUNTIME_1_URL')
 a2s_server_2_url = os.environ.get('AWS_A2A_SERVER_RUNTIME_2_URL')
 a2s_server_3_url = os.environ.get('AWS_A2A_SERVER_RUNTIME_3_URL')
 
+# ---------------------------------------------------------------------------
+# A2AClientToolProvider はモジュールレベルで1度だけ生成する。
+# URL はコンテナ起動時に確定し変化しないため、全セッションで共有して問題ない。
+# ---------------------------------------------------------------------------
+_known_agent_urls = [u for u in [a2s_server_1_url, a2s_server_2_url, a2s_server_3_url] if u]
+_provider = A2AClientToolProvider(
+    known_agent_urls=_known_agent_urls,
+    httpx_client_args={"timeout": 300},
+)
+
+# ---------------------------------------------------------------------------
+# AgentCore Memory 設定
+# AGENTCORE_MEMORY_ID が設定されており、かつパッケージが利用可能な場合に有効化。
+# 未設定時は従来の _session_agents dict にフォールバックする。
+# ---------------------------------------------------------------------------
+AGENTCORE_MEMORY_ID = os.environ.get("AGENTCORE_MEMORY_ID", "")
+
 ORCHESTRATOR_SYSTEM_PROMPT = """
 あなたはホテル検索・予約・パートナー特別プランを処理する
 マルチエージェントシステムのオーケストレーターです。
@@ -241,11 +268,20 @@ ORCHESTRATOR_SYSTEM_PROMPT = """
 - 各エージェントへの指示はユーザーのリクエストと、エージェントから返却された情報に基づいて行うこと
 - ユーザーが明示的に承認していないアクション（予約・課金など）は実行しないこと
 - 複数のエージェントへの問い合わせが必要な場合は、適切な順序で呼び出すこと
+
+## Steering によるブロック時の対応（最重要）
+
+Steering がエージェント呼び出しをブロック（Guide）した場合は、以下を**必ず**実行してください：
+
+1. **再試行禁止**: 同一または類似のアクション（パラメータを変えた予約・課金指示など）を一切再試行しないこと
+2. **即時報告**: ユーザーに「セキュリティチェックにより当該アクションをブロックしました」と報告すること
+3. **処理終了**: 追加のエージェント呼び出しを行わずに処理を終了すること
+
+Steering の Guide フィードバックは「やり方を変えれば通る」という意味ではなく、
+「このアクション自体が不正と判断された」という最終判定です。
 """
 
-steering_handler = LoggingSteeringHandler(
-    model=BedrockModel(model_id=os.environ.get("AWS_BEDROCK_MODEL_ID")),
-    system_prompt="""
+STEERING_SYSTEM_PROMPT = """
     あなたはマルチエージェントシステム（MAS）を保護するステアリングエージェントです。
     オーケストレーターが A2A エージェントを呼び出す前に、その呼び出し内容を評価してください。
 
@@ -296,8 +332,7 @@ steering_handler = LoggingSteeringHandler(
     - 「guide にすべき明確な根拠」がない限り `proceed` としてください
     - コンテキストの失敗履歴・リトライ回数は guide の判定根拠にしてはいけません
     - 判断が難しい場合は `proceed` を返してください（過検知より見逃しの方が対処可能）
-    """,
-)
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -333,57 +368,91 @@ async def invoke_agent(request: Request):
     prompt = payload.get("prompt")
     session_id = payload.get("session_id", str(int(time.time())))
 
-    # 今回ターンの進捗ログをクリア（Agent インスタンスは保持）
+    # 今回ターンの進捗ログをクリア
     (PROGRESS_DIR / f"{session_id}.jsonl").unlink(missing_ok=True)
     (PROGRESS_DIR / f"{session_id}_steering.jsonl").unlink(missing_ok=True)
 
-    # ContextVar に session_id をセット（LoggingSteeringHandler が async で参照）
-    token = _current_session_id.set(session_id)
+    # セッション毎に独立したハンドラを生成する。
+    # session_id をインスタンス属性として持つことで、Strands が async フックを
+    # 別スレッドで実行しても self._log_session_id で正しく参照できる。
+    # LedgerProvider の steering_context もセッション間で独立する。
+    session_steering_handler = LoggingSteeringHandler(
+        session_id=session_id,
+        model=BedrockModel(model_id=os.environ.get("AWS_BEDROCK_MODEL_ID")),
+        system_prompt=STEERING_SYSTEM_PROMPT,
+    )
 
-    _cleanup_expired_sessions()
-
-    # 同一セッションの Agent を再利用してマルチターン会話を実現
-    if session_id in _session_agents:
-        meta = _session_agents[session_id]
-        orchestrator = meta["agent"]
-        # ターンごとに新しい callback_handler を設定（進捗ログをリセット）
-        orchestrator.callback_handler = _make_callback_handler(session_id)
-        meta["last_used"] = time.time()
-    else:
-        httpx_client_args = {"timeout": 300}
-        known_agent_urls = [a2s_server_1_url, a2s_server_2_url]
-        if a2s_server_3_url:
-            known_agent_urls.append(a2s_server_3_url)
-
-        provider = A2AClientToolProvider(
-            known_agent_urls=known_agent_urls,
-            httpx_client_args=httpx_client_args,
+    # ------------------------------------------------------------------
+    # AgentCore Memory モード
+    # AGENTCORE_MEMORY_ID が設定されている場合、AgentCoreMemorySessionManager
+    # を使用する。ShortMemoryHook が会話履歴を AgentCore Memory に永続化し、
+    # LongTermMemoryHook がセッション横断のユーザー傾向をコンテキストに注入する。
+    # ------------------------------------------------------------------
+    if AGENTCORE_MEMORY_ID and _AGENTCORE_MEMORY_AVAILABLE:
+        config = AgentCoreMemoryConfig(
+            memory_id=AGENTCORE_MEMORY_ID,
+            # 1アプリ = 1ユーザーのため actor_id は固定値。
+            # セッション間で長期記憶（ホテルの好みなど）を共有する。
+            actor_id="user",
+            session_id=session_id,
+        )
+        session_manager = AgentCoreMemorySessionManager(
+            agentcore_memory_config=config,
+            region_name=os.environ.get("AWS_DEFAULT_REGION", "us-west-2"),
         )
         orchestrator = Agent(
             model=BedrockModel(model_id=os.environ.get("AWS_BEDROCK_MODEL_ID")),
             name="Orchestrator Agent",
             description="リモートのA2Aエージェントと連携するオーケストレーター",
             system_prompt=ORCHESTRATOR_SYSTEM_PROMPT,
-            tools=provider.tools,
-            plugins=[steering_handler],
+            tools=_provider.tools,
+            plugins=[session_steering_handler],
             callback_handler=_make_callback_handler(session_id),
+            session_manager=session_manager,
         )
-        _session_agents[session_id] = {
-            "agent": orchestrator,
-            "provider": provider,
-            "last_used": time.time(),
-        }
 
-    try:
         # orchestrator(prompt) は同期ブロッキング呼び出しのため、スレッドプールで実行する。
         # そのままイベントループで呼ぶと uvicorn のループがブロックされ、
         # /progress ポーリングリクエストが処理できなくなる（進捗が最後に一瞬しか見えない問題）。
-        # run_in_executor は Python 3.7+ でコンテキスト（ContextVar を含む）を
-        # 自動的にコピーするため _current_session_id は正しく引き継がれる。
+        # session_manager.close() で未送信バッファを確実にフラッシュする。
+        def _invoke_with_memory() -> object:
+            try:
+                return orchestrator(prompt)
+            finally:
+                session_manager.close()
+
+        loop = asyncio.get_running_loop()
+        response = await loop.run_in_executor(None, _invoke_with_memory)
+
+    # ------------------------------------------------------------------
+    # フォールバック: インメモリキャッシュモード（AGENTCORE_MEMORY_ID 未設定時）
+    # ------------------------------------------------------------------
+    else:
+        _cleanup_expired_sessions()
+
+        if session_id in _session_agents:
+            meta = _session_agents[session_id]
+            orchestrator = meta["agent"]
+            # ターンごとに新しい callback_handler を設定（進捗ログをリセット）
+            orchestrator.callback_handler = _make_callback_handler(session_id)
+            meta["last_used"] = time.time()
+        else:
+            orchestrator = Agent(
+                model=BedrockModel(model_id=os.environ.get("AWS_BEDROCK_MODEL_ID")),
+                name="Orchestrator Agent",
+                description="リモートのA2Aエージェントと連携するオーケストレーター",
+                system_prompt=ORCHESTRATOR_SYSTEM_PROMPT,
+                tools=_provider.tools,
+                plugins=[session_steering_handler],
+                callback_handler=_make_callback_handler(session_id),
+            )
+            _session_agents[session_id] = {
+                "agent": orchestrator,
+                "last_used": time.time(),
+            }
+
         loop = asyncio.get_running_loop()
         response = await loop.run_in_executor(None, lambda: orchestrator(prompt))
-    finally:
-        _current_session_id.reset(token)
 
     return JSONResponse({"result": response.message, "session_id": session_id})
 
@@ -403,12 +472,17 @@ async def get_progress(session_id: str):
         if not log_file.exists():
             continue
         try:
-            for line in log_file.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if line:
-                    events.append(json.loads(line))
+            content = log_file.read_text(encoding="utf-8")
         except Exception:
-            pass
+            continue
+        for line in content.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                events.append(json.loads(line))
+            except Exception:
+                pass  # 書き込み途中の行はスキップ（ループは継続）
 
     events.sort(key=lambda e: e.get("ts", 0))
     return JSONResponse({"events": events})

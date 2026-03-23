@@ -22,6 +22,7 @@ Chat ページ
 from __future__ import annotations
 
 import base64
+from datetime import datetime
 import html as _html
 import json
 import logging
@@ -55,6 +56,81 @@ _SAMPLE_PROMPTS = [
     ("🎁 特別プラン", "パートナー特別プランを教えてください"),
     ("📝 レビュー＋予約", "ハーバーグランドお台場のレビューを見て、そのまま予約して"),
 ]
+
+
+# ---------------------------------------------------------------------------
+# AgentCore Memory
+# ---------------------------------------------------------------------------
+
+_AGENTCORE_MEMORY_ID = os.environ.get("AGENTCORE_MEMORY_ID", "")
+
+# 戦略 type 値 → 日本語ラベルのマッピング
+# get_memory レスポンスの各戦略オブジェクトは {"type": "EPISODIC", ...} の形式
+_STRATEGY_TYPE_LABELS: dict[str, str] = {
+    "EPISODIC":         "Episodic",
+    "USER_PREFERENCE":  "ユーザー設定",
+    "SEMANTIC":         "セマンティック",
+    "SUMMARIZATION":    "要約",
+}
+
+
+def _fetch_strategy_map(memory_id: str, region: str) -> tuple[dict[str, str], str | None]:
+    """strategyId → 表示名 のマッピングを取得する。
+
+    bedrock-agentcore-control の get_memory を呼び出し、各戦略の ID と
+    人間が読める名前を対応付ける。
+    Returns:
+        (strategy_map, error_message)
+
+    レスポンス構造:
+        {"memory": {"strategies": [{"strategyId": ..., "type": ..., ...}]}}
+    """
+    try:
+        ctrl = boto3.client("bedrock-agentcore-control", region_name=region)
+        resp = ctrl.get_memory(memoryId=memory_id)
+        strategies = resp.get("memory", {}).get("strategies", [])
+        result: dict[str, str] = {}
+        for s in strategies:
+            sid = s.get("strategyId", "")
+            strategy_type = s.get("type", "")
+            label = _STRATEGY_TYPE_LABELS.get(strategy_type, s.get("name", sid))
+            result[sid] = label
+        return result, None
+    except Exception as e:
+        logger.warning("Strategy マップ取得失敗: %s", e)
+        return {}, str(e)
+
+
+def _fetch_memory_records(
+    memory_id: str, region: str
+) -> tuple[list[dict], str | None]:
+    """AgentCore Memory から全レコードを取得する。
+
+    namespace="/" で list_memory_records を呼び出し、全戦略のレコードを一括取得する。
+    Returns:
+        (records, error_message)  — エラー時は records=[], error_message=str
+    """
+    try:
+        client = boto3.client("bedrock-agentcore", region_name=region)
+        records: list[dict] = []
+        next_token: str | None = None
+        while True:
+            kwargs: dict = {
+                "memoryId": memory_id,
+                "namespace": "/",
+                "maxResults": 50,
+            }
+            if next_token:
+                kwargs["nextToken"] = next_token
+            resp = client.list_memory_records(**kwargs)
+            records.extend(resp.get("memoryRecordSummaries", []))
+            next_token = resp.get("nextToken")
+            if not next_token:
+                break
+        return records, None
+    except Exception as e:
+        logger.warning("Memory レコード取得失敗: %s", e)
+        return [], str(e)
 
 
 @st.cache_resource
@@ -170,12 +246,17 @@ def _get_progress_events(session_id: str) -> list[dict]:
         if not log_file.exists():
             continue
         try:
-            for line in log_file.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if line:
-                    events.append(json.loads(line))
+            content = log_file.read_text(encoding="utf-8")
         except Exception:
-            pass
+            continue
+        for line in content.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                events.append(json.loads(line))
+            except Exception:
+                pass  # 書き込み途中の行はスキップ（ループは継続）
 
     events.sort(key=lambda e: e.get("ts", 0))
     return events
@@ -435,6 +516,14 @@ if "guardrail_id" not in st.session_state:
     st.session_state.guardrail_id = os.environ.get("BEDROCK_GUARDRAIL_ID", "")
 if "guardrail_version" not in st.session_state:
     st.session_state.guardrail_version = os.environ.get("BEDROCK_GUARDRAIL_VERSION", "DRAFT")
+if "memory_records" not in st.session_state:
+    st.session_state.memory_records = None   # None = 未取得, [] = 取得済みで空
+if "memory_error" not in st.session_state:
+    st.session_state.memory_error = None
+if "memory_updated_at" not in st.session_state:
+    st.session_state.memory_updated_at = None
+if "memory_strategy_map" not in st.session_state:
+    st.session_state.memory_strategy_map = {}
 
 # ---------------------------------------------------------------------------
 # バックグラウンドスレッドの完了チェック（スクリプト先頭）
@@ -483,16 +572,12 @@ st.caption(
 # ---------------------------------------------------------------------------
 
 with st.sidebar:
-    st.header("接続設定")
 
-    # ── AWS リージョン（Guardrail 用）────────────────────────────────
-    region = st.text_input(
-        "AWS リージョン",
-        value=os.environ.get("AWS_DEFAULT_REGION", "us-west-2"),
-        help="Guardrail を使用する場合に必要なリージョン",
-    )
+    # ================================================================
+    # 📡 接続設定
+    # ================================================================
+    st.subheader("📡 接続設定")
 
-    # ── オーケストレーター URL ──────────────────────────────────────────
     orchestrator_url = st.text_input(
         "オーケストレーター URL",
         value=st.session_state.get("chat_orchestrator_url") or os.environ.get("AWS_A2A_SERVER_ORCHESTRATOR_URL", "http://orchestrator:8080"),
@@ -502,12 +587,12 @@ with st.sidebar:
     # 入力値を保持（ページ遷移後も維持）
     st.session_state.chat_orchestrator_url = orchestrator_url
 
-    if not orchestrator_url:
-        st.caption("URL が未設定です。")
+    region = st.text_input(
+        "AWS リージョン",
+        value=os.environ.get("AWS_DEFAULT_REGION", "us-west-2"),
+        help="Guardrail を使用する場合に必要なリージョン",
+    )
 
-    st.divider()
-
-    # ── 通信設定 ──────────────────────────────────────────────────────
     request_timeout = st.slider(
         "タイムアウト（秒）",
         min_value=30,
@@ -517,11 +602,31 @@ with st.sidebar:
         help="オーケストレーターの応答待ち最大時間。エージェントの処理に時間がかかる場合は大きく設定してください。",
     )
 
+    if st.button("接続テスト", use_container_width=True):
+        if not orchestrator_url:
+            st.error("オーケストレーター URL を入力してください。")
+        else:
+            try:
+                with st.spinner("接続確認中..."):
+                    ping_url = orchestrator_url.rstrip("/") + "/ping"
+                    logger.debug("接続テスト: url=%s", ping_url)
+                    resp = requests.get(ping_url, timeout=5)
+                    resp.raise_for_status()
+                logger.info("接続テスト成功: url=%s", orchestrator_url)
+                st.success("接続に成功しました。")
+            except Exception as exc:
+                logger.error("接続テスト失敗: %s", exc, exc_info=True)
+                st.error(f"エラー: {exc}")
+
     st.divider()
 
-    # ── Guardrail 設定 ────────────────────────────────────────────────
+    # ================================================================
+    # 🛡️ Guardrail
+    # ================================================================
+    st.subheader("🛡️ Guardrail")
+
     guardrail_enabled = st.toggle(
-        "🛡️ Guardrail を有効にする",
+        "Guardrail を有効にする",
         value=st.session_state.guardrail_enabled,
     )
     st.session_state.guardrail_enabled = guardrail_enabled
@@ -539,45 +644,112 @@ with st.sidebar:
         )
         st.session_state.guardrail_id = guardrail_id_input
         st.session_state.guardrail_version = guardrail_version_input
-        st.caption("INPUT（送信前）と OUTPUT（受信後）の両方を評価します。")
+        st.caption(
+            "INPUT（送信前）と OUTPUT（受信後）の両方を評価します。\n"
+            "AWS 認証情報（`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`）が必要です。"
+        )
 
     st.divider()
 
-    # ── 接続テスト ────────────────────────────────────────────────────
-    if st.button("接続テスト", use_container_width=True):
-        if not orchestrator_url:
-            st.error("オーケストレーター URL を入力してください。")
-        else:
-            try:
-                with st.spinner("接続確認中..."):
-                    ping_url = orchestrator_url.rstrip("/") + "/ping"
-                    logger.debug("接続テスト: url=%s", ping_url)
-                    resp = requests.get(ping_url, timeout=5)
-                    resp.raise_for_status()
-                logger.info("接続テスト成功: url=%s", orchestrator_url)
-                st.success("接続に成功しました。")
-            except Exception as exc:
-                logger.error("接続テスト失敗: %s", exc, exc_info=True)
-                st.error(f"エラー: {exc}")
+    # ================================================================
+    # 🧠 AgentCore Memory
+    # ================================================================
+    if _AGENTCORE_MEMORY_ID:
+        st.subheader("🧠 AgentCore Memory")
 
-    # ── 履歴クリア ────────────────────────────────────────────────────
-    if st.button("チャット履歴をクリア", use_container_width=True):
+        col_btn, col_time = st.columns([2, 3])
+        with col_btn:
+            refresh_clicked = st.button(
+                "更新", key="memory_refresh", use_container_width=True
+            )
+        with col_time:
+            if st.session_state.memory_updated_at:
+                st.caption(f"更新: {st.session_state.memory_updated_at}")
+            else:
+                st.caption("未取得")
+
+        if refresh_clicked:
+            if not st.session_state.memory_strategy_map:
+                smap, smap_err = _fetch_strategy_map(_AGENTCORE_MEMORY_ID, region)
+                st.session_state.memory_strategy_map = smap
+                if smap_err:
+                    st.session_state.memory_error = f"戦略マップ取得失敗: {smap_err}"
+                    st.session_state.memory_records = []
+                    st.session_state.memory_updated_at = datetime.now().strftime("%H:%M:%S")
+                    st.rerun()
+            records, err = _fetch_memory_records(_AGENTCORE_MEMORY_ID, region)
+            st.session_state.memory_records = records
+            st.session_state.memory_error = err
+            st.session_state.memory_updated_at = datetime.now().strftime("%H:%M:%S")
+
+        err = st.session_state.memory_error
+        records = st.session_state.memory_records
+        strategy_map = st.session_state.memory_strategy_map
+
+        if err:
+            st.error(f"取得失敗: {err[:120]}")
+        elif records is None:
+            st.caption("「更新」を押してメモリを取得")
+        elif not records:
+            st.caption("レコードなし")
+        else:
+            strategy_options = {"全て": None} | {
+                label: sid
+                for sid, label in strategy_map.items()
+            }
+            selected_label = st.selectbox(
+                "戦略",
+                options=list(strategy_options.keys()),
+                key="memory_strategy_select",
+                label_visibility="collapsed",
+            )
+            selected_sid = strategy_options[selected_label]
+
+            filtered = [
+                r for r in records
+                if selected_sid is None
+                or r.get("memoryStrategyId") == selected_sid
+            ]
+            filtered.sort(key=lambda r: r.get("createdAt") or "")
+
+            if not filtered:
+                st.caption("レコードなし")
+            else:
+                st.caption(f"{len(filtered)} 件")
+                for r in filtered:
+                    text = r.get("content", {}).get("text", "")
+                    created = r.get("createdAt")
+                    ts = (
+                        created.strftime("%m/%d %H:%M")
+                        if hasattr(created, "strftime")
+                        else ""
+                    )
+                    st.markdown(
+                        f"<div style='font-size:11px;color:#1e293b;"
+                        f"padding:5px 8px;"
+                        f"background:#f1f5f9;border-left:3px solid #64748b;"
+                        f"margin:3px 0;border-radius:0 4px 4px 0;"
+                        f"word-break:break-word;'>"
+                        f"{_html.escape(text[:200])}"
+                        f"<span style='display:block;color:#64748b;"
+                        f"font-size:10px;margin-top:2px;'>{ts}</span>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+
+        st.divider()
+
+    # ================================================================
+    # チャット操作
+    # ================================================================
+    if st.button("🗑️ チャット履歴をクリア", use_container_width=True):
         st.session_state.chat_messages = []
         st.session_state.chat_sending = False
         st.session_state.chat_result_box = None
-        # 新しいセッション開始（オーケストレーター側のキャッシュとも切り離す）
         st.session_state.chat_session_id = str(uuid.uuid4())
         st.rerun()
 
-    st.divider()
-    st.caption(
-        "Guardrail を使用する場合は AWS 認証情報が必要です:\n"
-        "1. 環境変数 (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`)\n"
-        "2. `~/.aws/credentials`"
-    )
-
     # ── セッション ID（デバッグ用）────────────────────────────────────
-    st.divider()
     st.caption(f"Session ID: `{st.session_state.chat_session_id[:8]}...`")
 
 # ---------------------------------------------------------------------------
