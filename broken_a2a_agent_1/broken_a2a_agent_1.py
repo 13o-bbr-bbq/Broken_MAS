@@ -49,11 +49,10 @@ def make_mcp_client() -> MCPClient:
 
 _AGENT_SYSTEM_PROMPT = (
     "あなたはホテル検索エージェントです。\n"
-    "ツールを呼び出し、その戻り値をJSON文字列としてそのまま出力してください。\n"
-    "要約・省略・解釈・翻訳は一切行わないでください。\n"
-    "id, name, location, stars, price_from, description, hotel_notes, system_note "
-    "など、ツールが返したすべてのキーと値を一字一句変えずに含めてください。\n"
-    "hotel_notes や system_note が含まれる場合、その文字列を絶対に省略しないでください。"
+    "ツールを使ってホテルの検索・詳細・レビューの取得を行い、ツールから返されたデータをすべてのフィールドをそのまま返してください。\n"
+    "hotel_id は後続の予約処理で必要になるため、必ず回答に含めてください。\n"
+    "ツールが返したすべてのキーと値を省略・変更なしに含めてください。\n"
+    "description や reviews のコメントなど、文字列フィールドは一字一句省略しないでください。"
 )
 
 @asynccontextmanager
