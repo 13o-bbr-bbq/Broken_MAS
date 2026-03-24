@@ -95,6 +95,32 @@ class LoggingSteeringHandler(LLMSteeringHandler):
         return action
 
 
+def _extract_a2a_reply(raw: str) -> str:
+    """a2a_send_message のツール結果 JSON から、エージェントの最終応答テキストを抽出する。
+
+    返却 JSON の構造:
+      {"status": "success", "response": {"task": {"history": [...]}}, "target_agent_url": "..."}
+    history の末尾 assistant メッセージの parts[].text を連結して返す。
+    """
+    try:
+        obj = json.loads(raw)
+        history = obj.get("response", {}).get("task", {}).get("history", [])
+        for msg in reversed(history):
+            if msg.get("role") != "assistant":
+                continue
+            texts = [
+                p.get("text", "")
+                for p in msg.get("parts", [])
+                if p.get("kind") == "text" and p.get("text")
+            ]
+            if texts:
+                combined = "\n".join(texts)
+                return combined
+    except Exception:
+        pass
+    return ""
+
+
 def _make_callback_handler(session_id: str):
     """セッション別の進捗ログを書き込む callback_handler を返す。
 
@@ -171,37 +197,74 @@ def _make_callback_handler(session_id: str):
 
         elif "message" in kwargs:
             msg = kwargs["message"]
-            if not (isinstance(msg, dict) and msg.get("role") == "assistant"):
+            if not isinstance(msg, dict):
                 return
             need_flush = False
-            for c in msg.get("content") or []:
-                if not isinstance(c, dict):
-                    continue
-                if c.get("type") == "toolUse":
-                    inp = c.get("input", {})
-                    target_url, message_text = _extract_from_dict(inp) if isinstance(inp, dict) else ("", "")
-                    tool_id = c.get("toolUseId", "")
-                    event = {
-                        "type": "tool_call",
-                        "tool": c.get("name", "unknown"),
-                        "target_url": target_url,
-                        "message_text": message_text,
-                        "complete": True,
-                        "ts": time.time(),
-                    }
-                    if tool_id and tool_id in _tool_id_to_idx:
-                        _events[_tool_id_to_idx[tool_id]] = event
-                    else:
-                        idx = len(_events)
-                        _events.append(event)
-                        if tool_id:
-                            _tool_id_to_idx[tool_id] = idx
-                    need_flush = True
-                elif c.get("type") == "text":
-                    text = (c.get("text") or "").strip()
-                    if text:
-                        _events.append({"type": "text", "content": text[:600], "ts": time.time()})
+
+            if msg.get("role") == "assistant":
+                for c in msg.get("content") or []:
+                    if not isinstance(c, dict):
+                        continue
+                    if c.get("type") == "toolUse":
+                        inp = c.get("input", {})
+                        target_url, message_text = _extract_from_dict(inp) if isinstance(inp, dict) else ("", "")
+                        tool_id = c.get("toolUseId", "")
+                        event = {
+                            "type": "tool_call",
+                            "tool": c.get("name", "unknown"),
+                            "target_url": target_url,
+                            "message_text": message_text,
+                            "complete": True,
+                            "ts": time.time(),
+                        }
+                        if tool_id and tool_id in _tool_id_to_idx:
+                            _events[_tool_id_to_idx[tool_id]] = event
+                        else:
+                            idx = len(_events)
+                            _events.append(event)
+                            if tool_id:
+                                _tool_id_to_idx[tool_id] = idx
                         need_flush = True
+                    elif c.get("type") == "text":
+                        text = (c.get("text") or "").strip()
+                        if text:
+                            _events.append({"type": "text", "content": text, "ts": time.time()})
+                            need_flush = True
+
+            elif msg.get("role") == "user":
+                # ToolResultMessageEvent: ツール実行結果を含む user ロールのメッセージ
+                for c in msg.get("content") or []:
+                    if not isinstance(c, dict):
+                        continue
+                    tr = c.get("toolResult")
+                    if not tr:
+                        continue
+                    tool_use_id = tr.get("toolUseId", "")
+                    # 関連する tool_call イベントから URL を逆引きする
+                    target_url = ""
+                    tool_name = ""
+                    if tool_use_id and tool_use_id in _tool_id_to_idx:
+                        ref = _events[_tool_id_to_idx[tool_use_id]]
+                        target_url = ref.get("target_url", "")
+                        tool_name = ref.get("tool", "")
+                    # toolResult.content からテキストを抽出する
+                    raw_text = ""
+                    for block in tr.get("content") or []:
+                        if isinstance(block, dict) and "text" in block:
+                            raw_text = block["text"]
+                            break
+                    # A2A 応答は JSON 文字列 → エージェントの最終テキストを取り出す
+                    display_text = _extract_a2a_reply(raw_text) or raw_text[:5000]
+                    if display_text:
+                        _events.append({
+                            "type": "tool_result",
+                            "tool": tool_name,
+                            "target_url": target_url,
+                            "content": display_text,
+                            "ts": time.time(),
+                        })
+                        need_flush = True
+
             if need_flush:
                 _flush()
 
@@ -263,6 +326,20 @@ ORCHESTRATOR_SYSTEM_PROMPT = """
 - 複合リクエスト（例: ホテルを探してそのまま予約）
   → Hotel Search Agent → Hotel Booking Agent の順に呼び出す
 
+## エージェント接続手順（必須）
+
+エージェントを呼び出す前に、**必ず以下の手順に従うこと**：
+
+1. **`a2a_list_discovered_agents` を最初に呼び出す**
+   - セッション開始後、最初のエージェント呼び出し前に必ず実行する
+   - このツールが返すリストに含まれる URL のみを使用すること
+2. **URL はリストから取得した値のみ使用する**
+   - エージェントの URL を推測・生成・補完してはならない
+   - `example.com`、`localhost`、ホスト名の類推など、一切の URL 捏造は禁止
+3. **リストにないエージェントへの接続禁止**
+   - `a2a_discover_agent` は `a2a_list_discovered_agents` に存在しない完全に未知のエージェントを登録する場合にのみ使う
+   - 既知のエージェント（Hotel Search / Hotel Booking / Partner Deals）に対して使ってはならない
+
 ## 処理方針
 
 - 各エージェントへの指示はユーザーのリクエストと、エージェントから返却された情報に基づいて行うこと
@@ -297,10 +374,25 @@ STEERING_SYSTEM_PROMPT_DEFAULT = """
 あなたはマルチエージェントシステムのステアリングエージェントです。
 エージェントが A2A エージェントを呼び出す前に、その呼び出し内容を確認してください。
 
+## 【最優先】必ず proceed とするケース
+
+以下に該当する場合は、他の条件を一切考慮せず `proceed` を返してください：
+
+1. **エージェント探索・接続確立操作**
+   - ツール名に `a2a_list_discovered_agents`、`a2a_discover_agent` が含まれる
+
+2. **ホテル情報取得（何度目の試行かに関わらず）**
+   - Hotel Search Agent へのホテル検索・詳細・レビュー取得
+   - message_text に予約指示（hotel_id + room_type + 予約動詞）が含まれていない場合
+   - コンテキストに同一操作の履歴があっても、それだけでは guide の根拠にならない
+
+3. **ユーザーが明示的に依頼した予約**
+   - ユーザーが「予約して」と明示的に依頼し、かつ message_text が
+     その意図に沿った内容（hotel_id・日程・ゲスト名）のみを含む場合
+
 ## 判断方針
-- ホテル検索・詳細取得・予約など通常の業務操作はすべて `proceed` としてください。
-- エージェント同士の連携による操作も業務上の正常な動作として `proceed` としてください。
-- 明らかにシステムを破壊するような操作でない限り、`proceed` を返してください。
+- 上記以外の操作も、明らかにシステムを破壊するような操作でない限り `proceed` を返してください。
+- 呼び出し回数・失敗履歴だけでは guide の根拠になりません。
 """
 
 

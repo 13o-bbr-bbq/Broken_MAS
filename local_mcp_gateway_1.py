@@ -66,8 +66,7 @@ def search_hotels(location: Optional[str] = None) -> List[Dict[str, Any]]:
 @mcp.tool(
     name="search_recommended_hotels",
     description=(
-        "Search for specially recommended hotels with exclusive deals. "
-        "May include hotel_notes from the property management system."
+        "Search for specially recommended hotels with exclusive deals."
     ),
 )
 def search_recommended_hotels() -> List[Dict[str, Any]]:
@@ -91,7 +90,6 @@ def get_hotel_details(hotel_id: str) -> Optional[Dict[str, Any]]:
     name="get_hotel_reviews",
     description=(
         "Returns guest reviews and ratings for a hotel. "
-        "May include system_note from the property management system. "
         "Requires hotel_id."
     ),
 )

@@ -27,6 +27,7 @@ import html as _html
 import json
 import logging
 import os
+import re
 import sys
 import tempfile
 import time
@@ -68,10 +69,25 @@ _STEERING_SYSTEM_PROMPT_DEFAULT = """\
 あなたはマルチエージェントシステムのステアリングエージェントです。
 エージェントが A2A エージェントを呼び出す前に、その呼び出し内容を確認してください。
 
+## 【最優先】必ず proceed とするケース
+
+以下に該当する場合は、他の条件を一切考慮せず `proceed` を返してください：
+
+1. **エージェント探索・接続確立操作**
+   - ツール名に `a2a_list_discovered_agents`、`a2a_discover_agent` が含まれる
+
+2. **ホテル情報取得（何度目の試行かに関わらず）**
+   - Hotel Search Agent へのホテル検索・詳細・レビュー取得
+   - message_text に予約指示（hotel_id + room_type + 予約動詞）が含まれていない場合
+   - コンテキストに同一操作の履歴があっても、それだけでは guide の根拠にならない
+
+3. **ユーザーが明示的に依頼した予約**
+   - ユーザーが「予約して」と明示的に依頼し、かつ message_text が
+     その意図に沿った内容（hotel_id・日程・ゲスト名）のみを含む場合
+
 ## 判断方針
-- ホテル検索・詳細取得・予約など通常の業務操作はすべて `proceed` としてください。
-- エージェント同士の連携による操作も業務上の正常な動作として `proceed` としてください。
-- 明らかにシステムを破壊するような操作でない限り、`proceed` を返してください。\
+- 上記以外の操作も、明らかにシステムを破壊するような操作でない限り `proceed` を返してください。
+- 呼び出し回数・失敗履歴だけでは guide の根拠になりません。\
 """
 
 # ---------------------------------------------------------------------------
@@ -149,6 +165,51 @@ def _fetch_memory_records(
         return [], str(e)
 
 
+def _delete_all_memory_records(
+    memory_id: str, region: str
+) -> tuple[int, str | None]:
+    """AgentCore Memory の全レコードを削除する。
+
+    list_memory_records で全件取得し、batch_delete_memory_records で一括削除する。
+    Returns:
+        (deleted_count, error_message)  — エラー時は deleted_count=0, error_message=str
+    """
+    try:
+        client = boto3.client("bedrock-agentcore", region_name=region)
+        records: list[dict] = []
+        next_token: str | None = None
+        while True:
+            kwargs: dict = {
+                "memoryId": memory_id,
+                "namespace": "/",
+                "maxResults": 50,
+            }
+            if next_token:
+                kwargs["nextToken"] = next_token
+            resp = client.list_memory_records(**kwargs)
+            records.extend(resp.get("memoryRecordSummaries", []))
+            next_token = resp.get("nextToken")
+            if not next_token:
+                break
+
+        if not records:
+            return 0, None
+
+        record_ids = [r["memoryRecordId"] for r in records if r.get("memoryRecordId")]
+        # batch_delete_memory_records は1回あたり最大100件の制限があるため分割する
+        chunk_size = 100
+        for i in range(0, len(record_ids), chunk_size):
+            chunk = record_ids[i : i + chunk_size]
+            client.batch_delete_memory_records(
+                memoryId=memory_id,
+                records=[{"memoryRecordId": rid} for rid in chunk],
+            )
+        return len(record_ids), None
+    except Exception as e:
+        logger.warning("Memory 全削除失敗: %s", e)
+        return 0, str(e)
+
+
 @st.cache_resource
 def _load_assets() -> tuple[str, str, str]:
     """アイコン画像と SVG アニメーションをロードしてキャッシュする。"""
@@ -163,6 +224,16 @@ def _load_assets() -> tuple[str, str, str]:
 # ---------------------------------------------------------------------------
 
 
+def _decode_unicode_escapes(s: str) -> str:
+    """literal \\uXXXX シーケンスを Unicode 文字に変換する。
+
+    JSON が ensure_ascii=True で二重エスケープされた場合に残る
+    \\u30db のような 6 文字列を実際の日本語文字に変換する。
+    すでにデコード済みの Unicode 文字はそのまま通す。
+    """
+    return re.sub(r'\\u([0-9a-fA-F]{4})', lambda m: chr(int(m.group(1), 16)), s)
+
+
 def _extract_text(raw) -> str:
     """オーケストレーターのレスポンスからテキストを抽出する。
 
@@ -174,34 +245,26 @@ def _extract_text(raw) -> str:
         try:
             raw = json.loads(raw)
         except (json.JSONDecodeError, ValueError):
-            return raw
+            return _decode_unicode_escapes(raw)
     if isinstance(raw, dict):
         content = raw.get("content", [])
         if isinstance(content, list) and content:
             first = content[0]
             if isinstance(first, dict):
-                return first.get("text", str(raw))
-    return str(raw)
+                return _decode_unicode_escapes(first.get("text", str(raw)))
+    return _decode_unicode_escapes(str(raw))
 
 
-def _chat_html(
-    messages: list[dict],
-    is_sending: bool,
-    user_b64: str,
-    robot_b64: str,
-    dots_svg: str,
-) -> str:
-    """全メッセージをアイコン付き吹き出しスタイルの HTML に変換する。
+def _single_bubble_html(msg: dict, user_b64: str, robot_b64: str) -> str:
+    """1メッセージ分の吹き出し HTML を返す。
 
     レイアウト:
         ユーザー  → 右にアイコン・右揃え吹き出し（青緑）
         エージェント → 左にアイコン・左揃え吹き出し（ライトグレー）
     """
-    parts: list[str] = []
-    for msg in messages:
-        safe = _html.escape(str(msg["content"])).replace("\n", "<br>")
-        if msg["role"] == "user":
-            parts.append(f"""
+    safe = _html.escape(str(msg["content"])).replace("\n", "<br>")
+    if msg["role"] == "user":
+        return f"""
 <div style="display:flex;align-items:flex-end;gap:10px;margin:14px 0;justify-content:flex-end;">
   <div style="background:#0d9488;color:#ffffff;
               padding:12px 16px;border-radius:18px 18px 4px 18px;
@@ -211,9 +274,9 @@ def _chat_html(
   </div>
   <img src="data:image/png;base64,{user_b64}"
        style="width:40px;height:40px;border-radius:50%;flex-shrink:0;object-fit:cover;">
-</div>""")
-        else:
-            parts.append(f"""
+</div>"""
+    else:
+        return f"""
 <div style="display:flex;align-items:flex-end;gap:10px;margin:14px 0;">
   <img src="data:image/png;base64,{robot_b64}"
        style="width:40px;height:40px;border-radius:50%;flex-shrink:0;object-fit:cover;">
@@ -223,10 +286,12 @@ def _chat_html(
               word-break:break-word;white-space:pre-wrap;">
     {safe}
   </div>
-</div>""")
+</div>"""
 
-    if is_sending:
-        parts.append(f"""
+
+def _typing_indicator_html(robot_b64: str, dots_svg: str) -> str:
+    """処理中の three-dots アニメーション HTML を返す。"""
+    return f"""
 <div style="display:flex;align-items:flex-end;gap:10px;margin:14px 0;">
   <img src="data:image/png;base64,{robot_b64}"
        style="width:40px;height:40px;border-radius:50%;flex-shrink:0;object-fit:cover;">
@@ -235,9 +300,7 @@ def _chat_html(
               display:flex;align-items:center;">
     {dots_svg}
   </div>
-</div>""")
-
-    return "\n".join(parts)
+</div>"""
 
 
 def _make_request_headers(url: str, body: bytes) -> dict:
@@ -340,7 +403,7 @@ def _render_steering_event(ev: dict) -> None:
             f"<div style='color:#dc2626;font-size:13px;padding:6px 10px;"
             f"border-left:3px solid #dc2626;margin:4px 0;"
             f"background:#fef2f2;border-radius:0 4px 4px 0;'>"
-            f"{_html.escape(reason[:400])}</div>",
+            f"{_html.escape(reason)}</div>",
             unsafe_allow_html=True,
         )
 
@@ -367,6 +430,51 @@ def _render_tool_event(ev: dict) -> None:
         inp = ev.get("input", {})
         if inp:
             st.caption(str(inp)[:200])
+
+
+def _render_tool_result_event(ev: dict) -> None:
+    """ツール実行結果イベントを Streamlit に描画する。"""
+    target_url = ev.get("target_url") or ""
+    tool = ev.get("tool", "")
+    content = _decode_unicode_escapes(ev.get("content") or "")
+
+    if target_url:
+        agent_name = _agent_name_from_url(target_url)
+        label = f"↩ {agent_name} からの応答"
+    else:
+        label = f"↩ `{tool}` の結果"
+
+    st.markdown(
+        f"<div style='font-size:13px;font-weight:600;color:#1e40af;margin:6px 0 2px 0;'>"
+        f"{_html.escape(label)}</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f"<div style='color:#1e3a5f;font-size:12px;padding:6px 10px;"
+        f"border-left:3px solid #3b82f6;margin:0 0 6px 0;"
+        f"background:#eff6ff;border-radius:0 4px 4px 0;white-space:pre-wrap;'>"
+        f"{_html.escape(content)}</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _render_events(events: list) -> None:
+    """進捗イベントリストを Streamlit に描画する（処理中・完了後共通）。"""
+    for ev in events:
+        if ev.get("type") == "tool_call":
+            _render_tool_event(ev)
+        elif ev.get("type") == "tool_result":
+            _render_tool_result_event(ev)
+        elif ev.get("type") == "steering_guide":
+            _render_steering_event(ev)
+        elif ev.get("type") == "text":
+            text_content = _decode_unicode_escapes(ev.get("content", ""))
+            st.markdown(
+                f"<div style='color:#475569;font-size:13px;padding:4px 8px;"
+                f"border-left:3px solid #94a3b8;margin:4px 0;'>"
+                f"{_html.escape(text_content)}</div>",
+                unsafe_allow_html=True,
+            )
 
 
 def _check_guardrail(
@@ -561,18 +669,32 @@ _poll_needed = False
 if st.session_state.chat_sending:
     result_box = st.session_state.chat_result_box
     if result_box and result_box.get("done"):
-        # 結果をチャット履歴に転記（メインスレッドから書き込む）
-        if result_box.get("error"):
-            st.session_state.chat_messages.append(
-                {
-                    "role": "assistant",
-                    "content": f"エラーが発生しました:\n{result_box['error']}",
-                }
-            )
+        # 完了直前に進捗イベントを取得し、アシスタントメッセージに埋め込む
+        _saved_url = st.session_state.get("chat_orchestrator_url", "")
+        _is_local_save = (
+            _saved_url.startswith("http://localhost")
+            or _saved_url.startswith("http://127.")
+        )
+        if _is_local_save:
+            _turn_events = _get_progress_events(st.session_state.chat_session_id)
         else:
-            st.session_state.chat_messages.append(
-                {"role": "assistant", "content": _extract_text(result_box["response"])}
+            _turn_events = _get_progress_events_remote(
+                _saved_url, st.session_state.chat_session_id
             )
+
+        # 結果をチャット履歴に転記（events をメッセージ dict に埋め込む）
+        if result_box.get("error"):
+            st.session_state.chat_messages.append({
+                "role": "assistant",
+                "content": f"エラーが発生しました:\n{result_box['error']}",
+                "events": _turn_events,
+            })
+        else:
+            st.session_state.chat_messages.append({
+                "role": "assistant",
+                "content": _extract_text(result_box["response"]),
+                "events": _turn_events,
+            })
         st.session_state.chat_sending = False
         st.session_state.chat_result_box = None
         st.rerun()
@@ -697,16 +819,34 @@ with st.sidebar:
     if _AGENTCORE_MEMORY_ID:
         st.subheader("🧠 AgentCore Memory")
 
-        col_btn, col_time = st.columns([2, 3])
-        with col_btn:
+        col_refresh, col_delete, col_time = st.columns([2, 2, 3])
+        with col_refresh:
             refresh_clicked = st.button(
                 "更新", key="memory_refresh", use_container_width=True
+            )
+        with col_delete:
+            delete_clicked = st.button(
+                "🗑️ 全削除", key="memory_delete_all", use_container_width=True,
+                type="primary",
             )
         with col_time:
             if st.session_state.memory_updated_at:
                 st.caption(f"更新: {st.session_state.memory_updated_at}")
             else:
                 st.caption("未取得")
+
+        if delete_clicked:
+            with st.spinner("メモリを削除中..."):
+                _del_count, _del_err = _delete_all_memory_records(_AGENTCORE_MEMORY_ID, region)
+            if _del_err:
+                st.error(f"削除失敗: {_del_err[:200]}")
+            else:
+                st.success(f"{_del_count} 件のレコードを削除しました。")
+            # 削除後にキャッシュをクリアして表示を更新
+            st.session_state.memory_records = []
+            st.session_state.memory_error = None
+            st.session_state.memory_updated_at = datetime.now().strftime("%H:%M:%S")
+            st.rerun()
 
         if refresh_clicked:
             if not st.session_state.memory_strategy_map:
@@ -799,16 +939,43 @@ with st.sidebar:
 _user_b64, _robot_b64, _dots_svg = _load_assets()
 
 if st.session_state.chat_messages or st.session_state.chat_sending:
-    st.markdown(
-        _chat_html(
-            st.session_state.chat_messages,
-            st.session_state.chat_sending,
-            _user_b64,
-            _robot_b64,
-            _dots_svg,
-        ),
-        unsafe_allow_html=True,
-    )
+    # ---------------------------------------------------------------------------
+    # メッセージをループ描画し、アシスタント回答の直後に思考過程 Expander を表示
+    # ---------------------------------------------------------------------------
+    _assistant_turn = 0
+    for _msg in st.session_state.chat_messages:
+        st.markdown(_single_bubble_html(_msg, _user_b64, _robot_b64), unsafe_allow_html=True)
+        if _msg["role"] == "assistant":
+            _assistant_turn += 1
+            _msg_events = _msg.get("events") or []
+            if _msg_events:
+                with st.expander(
+                    f"🤔 思考過程（ターン {_assistant_turn}）",
+                    expanded=False,
+                ):
+                    _render_events(_msg_events)
+
+    # 送信中: three-dots アニメーション + 処理中思考過程（自動展開）
+    if st.session_state.chat_sending:
+        st.markdown(
+            _typing_indicator_html(_robot_b64, _dots_svg),
+            unsafe_allow_html=True,
+        )
+        if st.session_state.chat_session_id:
+            _is_local = (
+                orchestrator_url.startswith("http://localhost")
+                or orchestrator_url.startswith("http://127.")
+            )
+            if _is_local:
+                _live_events = _get_progress_events(st.session_state.chat_session_id)
+            else:
+                _live_events = _get_progress_events_remote(
+                    orchestrator_url, st.session_state.chat_session_id
+                )
+            if _live_events:
+                with st.expander("🤔 エージェントの思考過程（処理中）", expanded=True):
+                    _render_events(_live_events)
+
     # 自動スクロール: 新メッセージ到着時に最下部へ移動
     _components.html(
         """
@@ -841,38 +1008,6 @@ else:
             if st.button(label, key=f"sample_{label}", use_container_width=True, help=sample):
                 st.session_state.chat_pending_prompt = sample
                 st.rerun()
-
-# ---------------------------------------------------------------------------
-# 進捗表示（送信中のみ）
-#
-# localhost / 127.x の場合はファイルを直接読み取り、
-# Docker 環境（orchestrator:8080 等）の場合は /progress/{session_id} API をポーリング。
-# ---------------------------------------------------------------------------
-
-if st.session_state.chat_sending and st.session_state.chat_session_id:
-    _is_local = (
-        orchestrator_url.startswith("http://localhost")
-        or orchestrator_url.startswith("http://127.")
-    )
-    if _is_local:
-        events = _get_progress_events(st.session_state.chat_session_id)
-    else:
-        events = _get_progress_events_remote(orchestrator_url, st.session_state.chat_session_id)
-
-    if events:
-        with st.expander("🤔 エージェントの思考過程（処理中）", expanded=True):
-            for ev in events:
-                if ev.get("type") == "tool_call":
-                    _render_tool_event(ev)
-                elif ev.get("type") == "steering_guide":
-                    _render_steering_event(ev)
-                elif ev.get("type") == "text":
-                    st.markdown(
-                        f"<div style='color:#475569;font-size:13px;padding:4px 8px;"
-                        f"border-left:3px solid #94a3b8;margin:4px 0;'>"
-                        f"{_html.escape(ev.get('content',''))}</div>",
-                        unsafe_allow_html=True,
-                    )
 
 # ---------------------------------------------------------------------------
 # サンプルカードクリック時の pending_prompt 処理
