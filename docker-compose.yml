@@ -13,7 +13,6 @@ services:
     environment:
       LOCAL_GW_1_PORT: "8010"
       OTEL_TRACES_EXPORTER: "none"
-      AGENTOPS_LOGGING_TO_FILE: "false"
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('localhost',8010),timeout=5); s.close()"]
       interval: 10s
@@ -31,7 +30,6 @@ services:
     environment:
       LOCAL_GW_2_PORT: "8020"
       OTEL_TRACES_EXPORTER: "none"
-      AGENTOPS_LOGGING_TO_FILE: "false"
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('localhost',8020),timeout=5); s.close()"]
       interval: 10s
@@ -60,7 +58,6 @@ services:
       AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
       AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
       OTEL_TRACES_EXPORTER: "none"
-      AGENTOPS_LOGGING_TO_FILE: "false"
     depends_on:
       mcp-gateway-1:
         condition: service_healthy
@@ -88,7 +85,6 @@ services:
       AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
       AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
       OTEL_TRACES_EXPORTER: "none"
-      AGENTOPS_LOGGING_TO_FILE: "false"
     depends_on:
       mcp-gateway-2:
         condition: service_healthy
@@ -116,7 +112,6 @@ services:
       AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
       AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
       OTEL_TRACES_EXPORTER: "none"
-      AGENTOPS_LOGGING_TO_FILE: "false"
     depends_on:
       mcp-gateway-2:
         condition: service_healthy
@@ -148,7 +143,6 @@ services:
       AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
       AGENTCORE_MEMORY_ID: "${AGENTCORE_MEMORY_ID:-}"
       OTEL_TRACES_EXPORTER: "none"
-      AGENTOPS_LOGGING_TO_FILE: "false"
     depends_on:
       a2a-agent-1:
         condition: service_healthy
