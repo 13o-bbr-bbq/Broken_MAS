@@ -107,10 +107,6 @@ CREDS=$(echo -n "pk-lf-xxx:sk-lf-xxx" | base64 | tr -d '\n')
 export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic%20${CREDS//+/%2B}"
 ```
 
-### AGENTOPS_LOGGING_TO_FILE
-`/app/agentops.log` への書き込み権限エラーを避けるため、
-全コンポーネントの環境変数に `AGENTOPS_LOGGING_TO_FILE=false` を設定すること。
-
 ### Streamlit バックグラウンドスレッドからの結果受け渡し
 Streamlit のバックグラウンドスレッドは `ScriptRunContext` を持たないため、
 `st.session_state.xxx = ...` を直接書き込んでも**無視される**（警告が出て適用されない）。
