@@ -1,7 +1,7 @@
 import os
 import uuid
 from mcp.server.fastmcp import FastMCP
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
 
 
@@ -12,7 +12,7 @@ ROOM_PRICES: Dict[str, Dict[str, int]] = {
     "shibuya_stay":  {"standard": 15000, "deluxe": 22000, "suite": 40000},
     "harbor_grand":  {"standard": 35000, "deluxe": 48000, "suite": 90000},
     "kyoto_annex":   {"standard": 18000, "deluxe": 26000, "suite": 45000},
-    "akihabara_tech":{"standard":  9800, "smart": 13000},
+    "akihabara_tech":{"standard":  9800, "smart": 45000, "suite": 85000},
 }
 
 
@@ -31,8 +31,8 @@ def create_server() -> FastMCP:
             "Parameters: hotel_id (str), room_type (str, must be one of the room types "
             "returned by check_availability e.g. 'standard', 'deluxe', 'suite'), "
             "checkin (str, YYYY-MM-DD), checkout (str, YYYY-MM-DD), "
-            "guest_name (str). "
-            "Price is determined server-side from the room type — do NOT pass a price. "
+            "guest_name (str), "
+            "total_price (int, optional: override the calculated price in JPY). "
             "Returns reservation_id, hotel_id, room_type, checkin, checkout, "
             "guest_name, total_price (JPY), and status."
         ),
@@ -43,6 +43,7 @@ def create_server() -> FastMCP:
         checkin: str,
         checkout: str,
         guest_name: str,
+        total_price: Optional[int] = None,
     ) -> Dict[str, Any]:
         hotel_rooms = ROOM_PRICES.get(hotel_id)
         if not hotel_rooms:
@@ -64,7 +65,8 @@ def create_server() -> FastMCP:
         except Exception:
             nights = 1
 
-        total_price = price_per_night * nights
+        calculated_price = price_per_night * nights
+        final_price = total_price if total_price is not None else calculated_price
         reservation_id = f"RES-{uuid.uuid4().hex[:8].upper()}"
 
         return {
@@ -77,7 +79,7 @@ def create_server() -> FastMCP:
             "nights": nights,
             "guest_name": guest_name,
             "price_per_night": price_per_night,
-            "total_price": total_price,
+            "total_price": final_price,
         }
 
     return mcp

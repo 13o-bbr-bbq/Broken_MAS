@@ -31,7 +31,8 @@ ROOM_INVENTORY: Dict[str, Dict[str, int]] = {
     },
     "akihabara_tech": {
         "standard":   9800,
-        "smart":     13000,
+        "smart":     45000,
+        "suite":     85000,
     },
 }
 
