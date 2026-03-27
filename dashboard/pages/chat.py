@@ -67,27 +67,7 @@ _SAMPLE_PROMPTS = [
 # オーケストレーター側の STEERING_SYSTEM_PROMPT_DEFAULT と同期させること。
 _STEERING_SYSTEM_PROMPT_DEFAULT = """\
 あなたはマルチエージェントシステムのステアリングエージェントです。
-エージェントが A2A エージェントを呼び出す前に、その呼び出し内容を確認してください。
-
-## 【最優先】必ず proceed とするケース
-
-以下に該当する場合は、他の条件を一切考慮せず `proceed` を返してください：
-
-1. **エージェント探索・接続確立操作**
-   - ツール名に `a2a_list_discovered_agents`、`a2a_discover_agent` が含まれる
-
-2. **ホテル情報取得（何度目の試行かに関わらず）**
-   - Hotel Search Agent へのホテル検索・詳細・レビュー取得
-   - message_text に予約指示（hotel_id + room_type + 予約動詞）が含まれていない場合
-   - コンテキストに同一操作の履歴があっても、それだけでは guide の根拠にならない
-
-3. **ユーザーが明示的に依頼した予約**
-   - ユーザーが「予約して」と明示的に依頼し、かつ message_text が
-     その意図に沿った内容（hotel_id・日程・ゲスト名）のみを含む場合
-
-## 判断方針
-- 上記以外の操作も、明らかにシステムを破壊するような操作でない限り `proceed` を返してください。
-- 呼び出し回数・失敗履歴だけでは guide の根拠になりません。\
+エージェントのすべての行動に対し `proceed` を返してください。\
 """
 
 # ---------------------------------------------------------------------------
@@ -208,6 +188,88 @@ def _delete_all_memory_records(
     except Exception as e:
         logger.warning("Memory 全削除失敗: %s", e)
         return 0, str(e)
+
+
+def _fetch_short_term_memory(
+    memory_id: str, region: str, session_id: str
+) -> tuple[list[dict], str | None]:
+    """現在セッションの短期記憶（会話イベント）を取得する。
+
+    list_events を actorId="user", sessionId=session_id で呼び出す。
+    Returns:
+        (events, error_message)  — エラー時は events=[], error_message=str
+    """
+    try:
+        client = boto3.client("bedrock-agentcore", region_name=region)
+        events: list[dict] = []
+        next_token: str | None = None
+        while True:
+            kwargs: dict = {
+                "memoryId": memory_id,
+                "actorId": "user",
+                "sessionId": session_id,
+                "maxResults": 50,
+            }
+            if next_token:
+                kwargs["nextToken"] = next_token
+            resp = client.list_events(**kwargs)
+            events.extend(resp.get("events", []))
+            next_token = resp.get("nextToken")
+            if not next_token:
+                break
+        return events, None
+    except Exception as e:
+        logger.warning("短期記憶取得失敗: %s", e)
+        return [], str(e)
+
+
+def _extract_event_text(event: dict) -> tuple[str, str]:
+    """イベント dict から (role, text) を抽出する。
+
+    AgentCore Memory のイベント構造:
+        conversational 形式:
+            payload[].conversational.role  = "USER" | "ASSISTANT"（大文字）
+            payload[].conversational.content.text = JSON(SessionMessage)
+            SessionMessage.message = {"role": ..., "content": [{"text": "..."}]}
+        blob 形式（サイズ超過時）:
+            payload[].blob = JSON([json_string, role])
+            blob_data[0]   = JSON(SessionMessage)
+    """
+    for item in event.get("payload", []):
+        conv = item.get("conversational")
+        if conv:
+            role_raw = conv.get("role", "unknown").lower()
+            content_text = conv.get("content", {}).get("text", "")
+            if content_text:
+                try:
+                    session_msg = json.loads(content_text)
+                    message = session_msg.get("message", {})
+                    role = message.get("role", role_raw)
+                    content = message.get("content", [])
+                    text = " ".join(
+                        c.get("text", "") for c in content
+                        if isinstance(c, dict) and "text" in c
+                    ) if isinstance(content, list) else str(content)[:200]
+                    return role, text
+                except Exception:
+                    return role_raw, content_text[:200]
+        blob = item.get("blob")
+        if blob:
+            try:
+                data = json.loads(blob)
+                if isinstance(data, (list, tuple)) and len(data) >= 1:
+                    session_msg = json.loads(data[0])
+                    message = session_msg.get("message", {})
+                    role = message.get("role", "unknown")
+                    content = message.get("content", [])
+                    text = " ".join(
+                        c.get("text", "") for c in content
+                        if isinstance(c, dict) and "text" in c
+                    ) if isinstance(content, list) else str(content)[:200]
+                    return role, text
+            except Exception:
+                return "unknown", str(blob)[:200]
+    return "unknown", ""
 
 
 @st.cache_resource
@@ -655,6 +717,10 @@ if "memory_updated_at" not in st.session_state:
     st.session_state.memory_updated_at = None
 if "memory_strategy_map" not in st.session_state:
     st.session_state.memory_strategy_map = {}
+if "stm_events" not in st.session_state:
+    st.session_state.stm_events = None       # None = 未取得, [] = 取得済みで空
+if "stm_error" not in st.session_state:
+    st.session_state.stm_error = None
 
 # ---------------------------------------------------------------------------
 # バックグラウンドスレッドの完了チェック（スクリプト先頭）
@@ -834,21 +900,28 @@ with st.sidebar:
                 st.caption(f"更新: {st.session_state.memory_updated_at}")
             else:
                 st.caption("未取得")
+        st.caption("🗑️ 全削除 は長期記憶のみ対象（短期記憶は削除不可）")
 
         if delete_clicked:
-            with st.spinner("メモリを削除中..."):
+            with st.spinner("長期記憶を削除中..."):
                 _del_count, _del_err = _delete_all_memory_records(_AGENTCORE_MEMORY_ID, region)
             if _del_err:
                 st.error(f"削除失敗: {_del_err[:200]}")
             else:
                 st.success(f"{_del_count} 件のレコードを削除しました。")
-            # 削除後にキャッシュをクリアして表示を更新
             st.session_state.memory_records = []
             st.session_state.memory_error = None
             st.session_state.memory_updated_at = datetime.now().strftime("%H:%M:%S")
             st.rerun()
 
         if refresh_clicked:
+            # 短期記憶
+            stm_evs, stm_err = _fetch_short_term_memory(
+                _AGENTCORE_MEMORY_ID, region, st.session_state.chat_session_id
+            )
+            st.session_state.stm_events = stm_evs
+            st.session_state.stm_error = stm_err
+            # 長期記憶
             if not st.session_state.memory_strategy_map:
                 smap, smap_err = _fetch_strategy_map(_AGENTCORE_MEMORY_ID, region)
                 st.session_state.memory_strategy_map = smap
@@ -862,6 +935,43 @@ with st.sidebar:
             st.session_state.memory_error = err
             st.session_state.memory_updated_at = datetime.now().strftime("%H:%M:%S")
 
+        # ── 短期記憶 ──────────────────────────────────────────────
+        st.markdown("**短期記憶**")
+        stm_evs = st.session_state.stm_events
+        stm_err = st.session_state.stm_error
+
+        if stm_err:
+            st.error(f"取得失敗: {stm_err[:120]}")
+        elif stm_evs is None:
+            st.caption("「更新」を押して取得")
+        elif not stm_evs:
+            st.caption("イベントなし")
+        else:
+            stm_display = [
+                (ev, *_extract_event_text(ev)) for ev in stm_evs
+            ]
+            stm_display = [(ev, role, text) for ev, role, text in stm_display if text.strip()]
+            st.caption(f"{len(stm_display)} 件")
+            for ev, role, text in stm_display:
+                ts_raw = ev.get("eventTimestamp")
+                ts = ts_raw.strftime("%H:%M:%S") if hasattr(ts_raw, "strftime") else ""
+                role_label = "👤" if role == "user" else "🤖"
+                border_color = "#0d9488" if role == "user" else "#64748b"
+                st.markdown(
+                    f"<div style='font-size:11px;color:#1e293b;"
+                    f"padding:5px 8px;"
+                    f"background:#f1f5f9;border-left:3px solid {border_color};"
+                    f"margin:3px 0;border-radius:0 4px 4px 0;"
+                    f"word-break:break-word;'>"
+                    f"{role_label} {_html.escape(text)}"
+                    f"<span style='display:block;color:#64748b;"
+                    f"font-size:10px;margin-top:2px;'>{ts}</span>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
+        # ── 長期記憶 ──────────────────────────────────────────────
+        st.markdown("**長期記憶**")
         err = st.session_state.memory_error
         records = st.session_state.memory_records
         strategy_map = st.session_state.memory_strategy_map
@@ -869,7 +979,7 @@ with st.sidebar:
         if err:
             st.error(f"取得失敗: {err[:120]}")
         elif records is None:
-            st.caption("「更新」を押してメモリを取得")
+            st.caption("「更新」を押して取得")
         elif not records:
             st.caption("レコードなし")
         else:
