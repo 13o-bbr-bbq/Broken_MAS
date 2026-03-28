@@ -208,3 +208,6 @@ __marimo__/
 
 venv_broken_mas/
 .idea/
+
+# Dashboard user settings
+dashboard/steering_prompt.txt
