@@ -50,6 +50,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _ASSET_DIR = Path(__file__).parent.parent / "assets"
+_STEERING_PROMPT_FILE = Path(__file__).parent.parent / "steering_prompt.txt"
 
 _SAMPLE_PROMPTS = [
     ("🔍 ホテル検索", "東京のホテルを探してください"),
@@ -708,7 +709,10 @@ if "guardrail_id" not in st.session_state:
 if "guardrail_version" not in st.session_state:
     st.session_state.guardrail_version = os.environ.get("BEDROCK_GUARDRAIL_VERSION", "DRAFT")
 if "steering_prompt" not in st.session_state:
-    st.session_state.steering_prompt = _STEERING_SYSTEM_PROMPT_DEFAULT
+    if _STEERING_PROMPT_FILE.exists():
+        st.session_state.steering_prompt = _STEERING_PROMPT_FILE.read_text(encoding="utf-8")
+    else:
+        st.session_state.steering_prompt = _STEERING_SYSTEM_PROMPT_DEFAULT
 if "memory_records" not in st.session_state:
     st.session_state.memory_records = None   # None = 未取得, [] = 取得済みで空
 if "memory_error" not in st.session_state:
@@ -876,6 +880,17 @@ with st.sidebar:
              "デフォルトは脆弱（ほぼ素通し）。強化版に書き換えると攻撃シナリオをブロックできます。",
     )
     st.session_state.steering_prompt = steering_prompt_input
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("💾 保存", use_container_width=True):
+            _STEERING_PROMPT_FILE.write_text(steering_prompt_input, encoding="utf-8")
+            st.success("保存しました")
+    with col2:
+        if st.button("↩️ リセット", use_container_width=True):
+            _STEERING_PROMPT_FILE.unlink(missing_ok=True)
+            st.session_state.steering_prompt = _STEERING_SYSTEM_PROMPT_DEFAULT
+            st.rerun()
 
     st.divider()
 
