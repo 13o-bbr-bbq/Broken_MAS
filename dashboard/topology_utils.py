@@ -681,11 +681,13 @@ def render_graph_to_html(
     os.unlink(html_path)
     logger.debug("render_graph_to_html 完了: html_len=%d", len(html_content))
 
+    # pyvis は同じ heading を <h1> タグで2箇所出力するため、1つ目を削除する
+    html_content = re.sub(r"<h1>.*?</h1>", "", html_content, count=1)
+
     if heading_override:
         html_content = re.sub(
             r"MAS Topology — .*? — ",
             f"{heading_override} — ",
             html_content,
-            count=1,
         )
     return html_content

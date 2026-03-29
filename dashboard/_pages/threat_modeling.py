@@ -27,8 +27,11 @@ _REPO_ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
 sys.path.insert(0, _REPO_ROOT)
 
 import threat_modeling_agent.threat_modeling_agent as tma
+from translations import get_translations
 
 logger = logging.getLogger(__name__)
+
+T = get_translations(st.session_state.get("lang", "日本語"))
 
 # ---------------------------------------------------------------------------
 # 定数
@@ -49,71 +52,71 @@ _PHASE_LABELS: dict[int, str] = {
 # field_type: "bool" / "text" / "select:opt1,opt2,..."
 _SUPPLEMENTAL_SECTIONS: list[dict] = [
     {
-        "label": "記憶機構",
+        "label": T["tm_section_memory"],
         "section": "memory",
         "fields": [
-            ("short_term",   "短期記憶（セッション内）",                        "bool"),
-            ("long_term",    "長期記憶（永続化）",                              "bool"),
-            ("vector_db",    "ベクトル DB / RAG の使用",                        "bool"),
-            ("shared_memory","共有メモリ（マルチエージェント・ユーザー間）",      "bool"),
+            ("short_term",    T["tm_field_stm"],           "bool"),
+            ("long_term",     T["tm_field_ltm"],           "bool"),
+            ("vector_db",     T["tm_field_vector_db"],     "bool"),
+            ("shared_memory", T["tm_field_shared_memory"], "bool"),
         ],
     },
     {
-        "label": "ツール・実行能力",
+        "label": T["tm_section_tools"],
         "section": "tools",
         "fields": [
-            ("code_execution",    "コード生成・実行",        "bool"),
-            ("file_access",       "ファイルシステムアクセス","bool"),
-            ("email_or_messaging","メール・メッセージ送信",  "bool"),
-            ("database_write",    "DB 書き込み",            "bool"),
+            ("code_execution",    T["tm_field_code_exec"],  "bool"),
+            ("file_access",       T["tm_field_file_access"],"bool"),
+            ("email_or_messaging",T["tm_field_messaging"],  "bool"),
+            ("database_write",    T["tm_field_db_write"],   "bool"),
         ],
     },
     {
-        "label": "認証・認可",
+        "label": T["tm_section_auth"],
         "section": "authentication",
         "fields": [
-            ("enabled",         "認証機能の有効化",                          "bool"),
-            ("method",          "認証方式（例: JWT, OAuth2, API Key）",       "text"),
-            ("rbac",            "RBAC（ロールベースアクセス制御）",           "bool"),
-            ("nhi",             "非人間 ID (NHI) の使用",                    "bool"),
-            ("least_privilege", "最小権限原則の適用",                        "bool"),
-            ("token_rotation",  "トークンローテーション",                    "bool"),
+            ("enabled",         T["tm_field_auth_enabled"],  "bool"),
+            ("method",          T["tm_field_auth_method"],   "text"),
+            ("rbac",            T["tm_field_rbac"],          "bool"),
+            ("nhi",             T["tm_field_nhi"],           "bool"),
+            ("least_privilege", T["tm_field_least_priv"],   "bool"),
+            ("token_rotation",  T["tm_field_token_rotation"],"bool"),
         ],
     },
     {
-        "label": "人間の関与",
+        "label": T["tm_section_human"],
         "section": "human_interaction",
         "fields": [
-            ("hitl",             "Human-in-the-Loop (HITL)",                      "bool"),
-            ("user_interaction", "ユーザー直接インタラクション",                  "bool"),
-            ("interaction_type", "インタラクション形式（例: チャット, フォーム）", "text"),
-            ("user_trust_level", "ユーザー信頼レベル",          "select:,low,medium,high"),
+            ("hitl",             T["tm_field_hitl"],              "bool"),
+            ("user_interaction", T["tm_field_user_interaction"],  "bool"),
+            ("interaction_type", T["tm_field_interaction_type"],  "text"),
+            ("user_trust_level", T["tm_field_trust_level"], "select:,low,medium,high"),
         ],
     },
     {
-        "label": "通信セキュリティ",
+        "label": T["tm_section_comms"],
         "section": "communication",
         "fields": [
-            ("encryption", "通信暗号化（TLS/HTTPS）", "bool"),
+            ("encryption", T["tm_field_tls"], "bool"),
         ],
     },
     {
-        "label": "マルチエージェント構成",
+        "label": T["tm_section_multi_agent"],
         "section": "multi_agent",
         "fields": [
-            ("trust_boundaries", "信頼境界の設定（例: エージェント間認証あり）", "text"),
+            ("trust_boundaries", T["tm_field_trust_boundary"], "text"),
         ],
     },
 ]
 
-_BOOL_OPTIONS = ["入力しない（情報なし）", "あり", "なし"]
+_BOOL_OPTIONS = [T["tm_bool_none"], T["tm_bool_yes"], T["tm_bool_no"]]
 
 # ---------------------------------------------------------------------------
 # ページ
 # ---------------------------------------------------------------------------
 
-st.title("🛡️ Threat Modeling")
-st.caption("OWASP Agentic AI ガイドラインに基づく机上脅威モデリングを実施します。")
+st.title(T["tm_title"])
+st.caption(T["tm_caption"])
 
 # ---------------------------------------------------------------------------
 # セッションステート初期化
@@ -177,11 +180,11 @@ def _render_supplemental_form(schema: dict) -> tuple[dict, bool]:
                             index=0,
                             key=widget_key,
                         )
-                        if chosen == "あり":
+                        if chosen == T["tm_bool_yes"]:
                             updated.setdefault(sec_key, {})[fkey] = True
-                        elif chosen == "なし":
+                        elif chosen == T["tm_bool_no"]:
                             updated.setdefault(sec_key, {})[fkey] = False
-                        # "入力しない" → null のまま（LLM が「情報なし」として扱う）
+                        # tm_bool_none → null のまま（LLM が「情報なし」として扱う）
 
                     elif ftype == "text":
                         val = st.text_input(flabel, value="", key=widget_key)
@@ -220,8 +223,7 @@ def _component_counts(schema: dict) -> tuple[int, int]:
         return [v]
 
     agent_count = (
-        len(_as_list(components.get("agents")))
-        + len(_as_list(components.get("orchestrators")))
+        len(_as_list(components.get("orchestrators")))
         + len(_as_list(components.get("a2a_agents")))
     )
     mcp_count = len(_as_list(components.get("mcp_servers")))
@@ -307,8 +309,8 @@ if current_state == "running":
     completed   = len(findings)
     total       = len(_PHASE_LABELS)  # 7
 
-    st.subheader("実行中...")
-    st.progress(completed / total, text=f"フェーズ {completed} / {total} 完了")
+    st.subheader(T["tm_subheader_running"])
+    st.progress(completed / total, text=T["tm_progress_text"].format(completed=completed, total=total))
 
     for f in findings:
         phase_num   = f.get("phase_num", "?")
@@ -321,7 +323,7 @@ if current_state == "running":
         if num not in completed_nums:
             st.write(f"⏳ Phase {num}: {label}")
 
-    st.caption("各フェーズで LLM が脅威評価を実施しています。完了まで数分かかります。")
+    st.caption(T["tm_caption_running"])
 
     # result_box["done"] が立っていれば完了 → メインスレッドから st.session_state に転記
     if result_box.get("done"):
@@ -339,10 +341,10 @@ if current_state == "running":
 
 elif current_state == "completed":
     if st.session_state.tm_error:
-        st.error(f"実行エラー: {st.session_state.tm_error}")
+        st.error(T["tm_error_run"].format(e=st.session_state.tm_error))
 
     if st.session_state.tm_report:
-        st.subheader("脅威モデリングレポート")
+        st.subheader(T["tm_subheader_report"])
 
         report = st.session_state.tm_report
         output_fmt = st.session_state.get("tm_output_format", "markdown")
@@ -357,14 +359,14 @@ elif current_state == "completed":
 
         file_ext = ".json" if output_fmt == "json" else ".md"
         st.download_button(
-            label="レポートをダウンロード",
+            label=T["tm_btn_download_report"],
             data=report,
             file_name=f"threat_model_report{file_ext}",
             mime="application/json" if output_fmt == "json" else "text/markdown",
         )
 
     st.divider()
-    if st.button("もう一度実行する", type="secondary"):
+    if st.button(T["tm_btn_rerun"], type="secondary"):
         st.session_state.tm_state  = "idle"
         st.session_state.tm_report = None
         st.session_state.tm_error  = None
@@ -378,19 +380,19 @@ else:  # idle
 
     # ── ① スキーマソース選択 ──────────────────────────────────────────────
 
-    st.subheader("① スキーマソースの選択")
+    st.subheader(T["tm_subheader_schema_source"])
 
     has_viz_schema = bool(st.session_state.get("viz_schema"))
 
     source_options = [
-        "Visualization の結果を使用",
-        "JSON ファイルをアップロード",
-        "テキストで直接記述",
+        T["tm_option_viz"],
+        T["tm_option_upload"],
+        T["tm_option_text"],
     ]
     default_idx = 0 if has_viz_schema else 1
 
     schema_source = st.radio(
-        "スキーマソース",
+        T["tm_subheader_schema_source"],
         options=source_options,
         index=default_idx,
         horizontal=True,
@@ -400,34 +402,32 @@ else:  # idle
     schema_dict: dict | None = None
     system_description_text: str | None = None
 
-    if schema_source == "Visualization の結果を使用":
+    if schema_source == T["tm_option_viz"]:
         if not has_viz_schema:
-            st.warning(
-                "Visualization ページでグラフを生成してからこのオプションを使用してください。"
-            )
+            st.warning(T["tm_warning_no_viz"])
             st.stop()
         schema_dict = copy.deepcopy(st.session_state.viz_schema)
-        st.success("Visualization ページで生成したスキーマを読み込みました。")
+        st.success(T["tm_success_viz_loaded"])
 
-    elif schema_source == "JSON ファイルをアップロード":
+    elif schema_source == T["tm_option_upload"]:
         uploaded = st.file_uploader(
-            "system_schema.json をアップロード",
+            T["tm_label_upload"],
             type=["json"],
-            help="visualize_traces.py --export-schema で生成した JSON ファイルを使用できます。",
+            help=T["tm_help_upload"],
         )
         if not uploaded:
-            st.info("JSON ファイルをアップロードしてください。")
+            st.info(T["tm_info_upload_prompt"])
             st.stop()
         try:
             schema_dict = json.load(uploaded)
-            st.success("JSON ファイルを読み込みました。")
+            st.success(T["tm_success_upload"])
         except json.JSONDecodeError as e:
-            st.error(f"JSON のパースに失敗しました: {e}")
+            st.error(T["tm_error_json_parse"].format(e=e))
             st.stop()
 
     else:  # テキストで直接記述
         system_description_text = st.text_area(
-            "システムのアーキテクチャ記述",
+            T["tm_label_text_input"],
             height=220,
             placeholder=(
                 "例:\n"
@@ -438,18 +438,15 @@ else:  # idle
             ),
         )
         if not (system_description_text or "").strip():
-            st.info("システムのアーキテクチャ記述を入力してください。")
+            st.info(T["tm_info_text_prompt"])
             st.stop()
 
     # ── ② 補足情報の入力（スキーマ dict がある場合のみ） ─────────────────
 
     if schema_dict is not None:
         st.divider()
-        st.subheader("② 補足情報の入力")
-        st.caption(
-            "ログから取得できなかった項目を入力してください。"
-            "入力しない項目は「情報なし」として脅威モデリングを実施します。"
-        )
+        st.subheader(T["tm_subheader_supplement"])
+        st.caption(T["tm_caption_supplement"])
 
         # 検出済み情報をサマリー表示
         detected_items: list[str] = []
@@ -459,29 +456,26 @@ else:  # idle
                 val = sec_data.get(fkey)
                 if val is not None:
                     display = (
-                        "あり" if val is True
-                        else ("なし" if val is False else str(val))
+                        T["tm_bool_yes"] if val is True
+                        else (T["tm_bool_no"] if val is False else str(val))
                     )
                     detected_items.append(f"- **{flabel}**: {display}")
 
         if detected_items:
-            with st.expander("ログから検出済みの情報を確認", expanded=False):
+            with st.expander(T["tm_expander_detected"], expanded=False):
                 st.markdown("\n".join(detected_items))
 
         updated_schema, any_null = _render_supplemental_form(schema_dict)
 
         if not any_null:
-            st.success("全フィールドがログから検出されました。補足入力は不要です。")
+            st.success(T["tm_success_all_detected"])
 
         agent_count, mcp_count = _component_counts(updated_schema)
         c1, c2 = st.columns(2)
-        c1.metric("検出エージェント数", agent_count)
-        c2.metric("検出 MCP サーバー数", mcp_count)
+        c1.metric(T["tm_metric_agents"], agent_count)
+        c2.metric(T["tm_metric_mcp_servers"], mcp_count)
         if agent_count == 0:
-            st.warning(
-                "エージェントが 0 件として検出されました。"
-                "system_schema.json の components.agents / orchestrators / a2a_agents を確認してください。"
-            )
+            st.warning(T["tm_warning_no_agents"])
 
         # 最終的なシステム記述を生成
         final_description = tma._system_dict_to_markdown(updated_schema)
@@ -493,9 +487,9 @@ else:  # idle
     # ── ③ 出力形式 ────────────────────────────────────────────────────────
 
     st.divider()
-    st.subheader("③ 出力形式")
+    st.subheader(T["tm_subheader_output"])
     output_format = st.radio(
-        "レポート形式",
+        T["tm_label_report_format"],
         options=["markdown", "json"],
         horizontal=True,
         label_visibility="collapsed",
@@ -506,14 +500,14 @@ else:  # idle
     st.divider()
 
     if not os.environ.get("AWS_BEDROCK_MODEL_ID"):
-        st.error("環境変数 AWS_BEDROCK_MODEL_ID が設定されていません。")
+        st.error(T["tm_error_no_model_id"])
         st.stop()
 
     if not final_description.strip():
-        st.warning("システム記述が空です。スキーマソースを確認してください。")
+        st.warning(T["tm_warning_empty_schema"])
         st.stop()
 
-    if st.button("脅威モデリングを実行", type="primary", use_container_width=False):
+    if st.button(T["tm_btn_run"], type="primary", use_container_width=False):
         session_id = str(uuid.uuid4())
 
         # result_box: スレッドが結果を書き込む通常の Python dict
