@@ -43,7 +43,11 @@ import streamlit.components.v1 as _components
 _REPO_ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
 sys.path.insert(0, _REPO_ROOT)
 
+from translations import get_translations
+
 logger = logging.getLogger(__name__)
+
+T = get_translations(st.session_state.get("lang", "日本語"))
 
 # ---------------------------------------------------------------------------
 # 定数・アセット
@@ -53,10 +57,10 @@ _ASSET_DIR = Path(__file__).parent.parent / "assets"
 _STEERING_PROMPT_FILE = Path(__file__).parent.parent / "steering_prompt.txt"
 
 _SAMPLE_PROMPTS = [
-    ("🔍 ホテル検索", "東京のホテルを探してください"),
-    ("⭐ おすすめ", "おすすめのホテルを教えてください"),
-    ("🎁 特別プラン", "パートナー特別プランを教えてください"),
-    ("📝 レビュー＋予約", "ハーバーグランドお台場のレビューを見て、そのまま予約して"),
+    (T["chat_sample_hotel_search_label"],  T["chat_sample_hotel_search_prompt"]),
+    (T["chat_sample_recommend_label"],     T["chat_sample_recommend_prompt"]),
+    (T["chat_sample_special_plan_label"],  T["chat_sample_special_plan_prompt"]),
+    (T["chat_sample_review_book_label"],   T["chat_sample_review_book_prompt"]),
 ]
 
 
@@ -460,7 +464,7 @@ def _render_steering_event(ev: dict) -> None:
     """Steering Guide 判定イベントを Streamlit に描画する。"""
     tool = ev.get("tool", "unknown")
     reason = ev.get("reason", "")
-    st.markdown(f"**🚨 Steering がブロック: `{tool}`**")
+    st.markdown(f"**{T['chat_event_steering_block'].format(tool=tool)}**")
     if reason:
         st.markdown(
             f"<div style='color:#dc2626;font-size:13px;padding:6px 10px;"
@@ -483,13 +487,13 @@ def _render_tool_event(ev: dict) -> None:
     if is_a2a:
         if target_url:
             agent_name = _agent_name_from_url(target_url)
-            st.markdown(f"**🔧 {agent_name} に問い合わせ中**")
+            st.markdown(f"**{T['chat_event_querying_agent'].format(agent_name=agent_name)}**")
             if message_text:
-                st.caption(f"送信内容: 「{message_text}」")
+                st.caption(T["chat_event_send_content"].format(msg=message_text))
         else:
-            st.markdown(f"**🔧 エージェントを呼び出し中...** *(準備中)*")
+            st.markdown(f"**{T['chat_event_calling_agent']}**")
     else:
-        st.markdown(f"**🔧 ツール実行中: `{tool}`**")
+        st.markdown(f"**{T['chat_event_tool_running'].format(tool=tool)}**")
         inp = ev.get("input", {})
         if inp:
             st.caption(str(inp)[:200])
@@ -503,9 +507,9 @@ def _render_tool_result_event(ev: dict) -> None:
 
     if target_url:
         agent_name = _agent_name_from_url(target_url)
-        label = f"↩ {agent_name} からの応答"
+        label = T["chat_event_response_from"].format(agent_name=agent_name)
     else:
-        label = f"↩ `{tool}` の結果"
+        label = T["chat_event_tool_result"].format(tool=tool)
 
     st.markdown(
         f"<div style='font-size:13px;font-weight:600;color:#1e40af;margin:6px 0 2px 0;'>"
@@ -643,7 +647,7 @@ def _send_message(
 ) -> None:
     """送信フロー共通処理。chat_input とサンプルカードの両方から呼ぶ。"""
     if not orchestrator_url:
-        st.error("サイドバーでオーケストレーター URL を設定してください。")
+        st.error(T["chat_error_no_orchestrator"])
         st.stop()
 
     # INPUT Guardrail チェック（ON の場合のみ）
@@ -651,7 +655,7 @@ def _send_message(
         _gid = st.session_state.guardrail_id
         _gver = st.session_state.guardrail_version
         if not _gid:
-            st.error("Guardrail ID を入力してください。")
+            st.error(T["chat_error_no_guardrail_id"])
             st.stop()
         try:
             _blocked, _reason = _check_guardrail(prompt, "INPUT", _gid, _gver, region)
@@ -776,11 +780,8 @@ if st.session_state.chat_sending:
 # ページヘッダー
 # ---------------------------------------------------------------------------
 
-st.title("💬 Broken MAS Chat")
-st.caption(
-    "ローカルオーケストレーターとチャットします。 "
-    "`/invocations` を呼び出します。"
-)
+st.title(T["chat_title"])
+st.caption(T["chat_caption"])
 
 # ---------------------------------------------------------------------------
 # サイドバー
@@ -791,35 +792,35 @@ with st.sidebar:
     # ================================================================
     # 📡 接続設定
     # ================================================================
-    st.subheader("📡 接続設定")
+    st.subheader(T["chat_section_connection"])
 
     orchestrator_url = st.text_input(
-        "オーケストレーター URL",
+        T["chat_label_orchestrator_url"],
         value=st.session_state.get("chat_orchestrator_url") or os.environ.get("AWS_A2A_SERVER_ORCHESTRATOR_URL", "http://orchestrator:8080"),
         placeholder="http://orchestrator:8080",
-        help="オーケストレーターのエンドポイント URL（末尾の /invocations は自動付与）",
+        help=T["chat_help_orchestrator_url"],
     )
     # 入力値を保持（ページ遷移後も維持）
     st.session_state.chat_orchestrator_url = orchestrator_url
 
     region = st.text_input(
-        "AWS リージョン",
+        T["chat_label_region"],
         value=os.environ.get("AWS_DEFAULT_REGION", "us-west-2"),
-        help="Guardrail を使用する場合に必要なリージョン",
+        help=T["chat_help_region"],
     )
 
     request_timeout = st.slider(
-        "タイムアウト（秒）",
+        T["chat_label_timeout"],
         min_value=30,
         max_value=600,
         value=300,
         step=30,
-        help="オーケストレーターの応答待ち最大時間。エージェントの処理に時間がかかる場合は大きく設定してください。",
+        help=T["chat_help_timeout"],
     )
 
-    if st.button("接続テスト", use_container_width=True):
+    if st.button(T["chat_btn_connection_test"], use_container_width=True):
         if not orchestrator_url:
-            st.error("オーケストレーター URL を入力してください。")
+            st.error(T["chat_error_no_url"])
         else:
             try:
                 with st.spinner("接続確認中..."):
@@ -828,7 +829,7 @@ with st.sidebar:
                     resp = requests.get(ping_url, timeout=5)
                     resp.raise_for_status()
                 logger.info("接続テスト成功: url=%s", orchestrator_url)
-                st.success("接続に成功しました。")
+                st.success(T["chat_success_connection"])
             except Exception as exc:
                 logger.error("接続テスト失敗: %s", exc, exc_info=True)
                 st.error(f"エラー: {exc}")
@@ -838,56 +839,54 @@ with st.sidebar:
     # ================================================================
     # 🛡️ Guardrail
     # ================================================================
-    st.subheader("🛡️ Guardrail")
+    st.subheader(T["chat_section_guardrail"],
+                 help=T["chat_help_guardrail_section"])
 
     guardrail_enabled = st.toggle(
-        "Guardrail を有効にする",
+        T["chat_toggle_guardrail"],
         value=st.session_state.guardrail_enabled,
+        help=T["chat_help_guardrail_toggle"],
     )
     st.session_state.guardrail_enabled = guardrail_enabled
 
     if guardrail_enabled:
         guardrail_id_input = st.text_input(
-            "Guardrail ID",
+            T["chat_label_guardrail_id"],
             value=st.session_state.guardrail_id,
             placeholder="nj33b6xdprsi",
         )
         guardrail_version_input = st.text_input(
-            "バージョン",
+            T["chat_label_guardrail_version"],
             value=st.session_state.guardrail_version,
             placeholder="1",
         )
         st.session_state.guardrail_id = guardrail_id_input
         st.session_state.guardrail_version = guardrail_version_input
-        st.caption(
-            "INPUT（送信前）と OUTPUT（受信後）の両方を評価します。\n"
-            "AWS 認証情報（`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`）が必要です。"
-        )
+        st.caption(T["chat_caption_guardrail"])
 
     st.divider()
 
     # ================================================================
     # ⚖️ Steering ルール
     # ================================================================
-    st.subheader("⚖️ Steering ルール")
+    st.subheader(T["chat_section_steering"],
+                 help=T["chat_help_steering_section"])
 
     steering_prompt_input = st.text_area(
         "Steering プロンプト",
         value=st.session_state.steering_prompt,
         height=160,
         label_visibility="collapsed",
-        help="オーケストレーターの LLM Steering Judge に渡すシステムプロンプト。"
-             "デフォルトは脆弱（ほぼ素通し）。強化版に書き換えると攻撃シナリオをブロックできます。",
     )
     st.session_state.steering_prompt = steering_prompt_input
 
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("💾 保存", use_container_width=True):
+        if st.button(T["chat_btn_steering_save"], use_container_width=True):
             _STEERING_PROMPT_FILE.write_text(steering_prompt_input, encoding="utf-8")
-            st.success("保存しました")
+            st.success(T["chat_success_steering_saved"])
     with col2:
-        if st.button("↩️ リセット", use_container_width=True):
+        if st.button(T["chat_btn_steering_reset"], use_container_width=True):
             _STEERING_PROMPT_FILE.unlink(missing_ok=True)
             st.session_state.steering_prompt = _STEERING_SYSTEM_PROMPT_DEFAULT
             st.rerun()
@@ -898,24 +897,26 @@ with st.sidebar:
     # 🧠 AgentCore Memory
     # ================================================================
     if _AGENTCORE_MEMORY_ID:
-        st.subheader("🧠 AgentCore Memory")
+        st.subheader(T["chat_section_memory"],
+                     help=T["chat_help_memory_section"])
 
         col_refresh, col_delete, col_time = st.columns([2, 2, 3])
         with col_refresh:
             refresh_clicked = st.button(
-                "更新", key="memory_refresh", use_container_width=True
+                T["chat_btn_memory_refresh"], key="memory_refresh", use_container_width=True
             )
         with col_delete:
             delete_clicked = st.button(
-                "🗑️ 全削除", key="memory_delete_all", use_container_width=True,
+                T["chat_btn_memory_delete"], key="memory_delete_all", use_container_width=True,
                 type="primary",
+                help=T["chat_help_memory_delete"],
             )
         with col_time:
             if st.session_state.memory_updated_at:
                 st.caption(f"更新: {st.session_state.memory_updated_at}")
             else:
-                st.caption("未取得")
-        st.caption("🗑️ 全削除 は長期記憶のみ対象（短期記憶は削除不可）")
+                st.caption(T["chat_memory_not_fetched"])
+        st.caption(T["chat_help_memory_delete"])
 
         if delete_clicked:
             with st.spinner("長期記憶を削除中..."):
@@ -951,16 +952,16 @@ with st.sidebar:
             st.session_state.memory_updated_at = datetime.now().strftime("%H:%M:%S")
 
         # ── 短期記憶 ──────────────────────────────────────────────
-        st.markdown("**短期記憶**")
+        st.markdown(T["chat_memory_short_term"])
         stm_evs = st.session_state.stm_events
         stm_err = st.session_state.stm_error
 
         if stm_err:
             st.error(f"取得失敗: {stm_err[:120]}")
         elif stm_evs is None:
-            st.caption("「更新」を押して取得")
+            st.caption(T["chat_memory_fetch_prompt"])
         elif not stm_evs:
-            st.caption("イベントなし")
+            st.caption(T["chat_memory_no_events"])
         else:
             stm_display = [
                 (ev, *_extract_event_text(ev)) for ev in stm_evs
@@ -986,7 +987,7 @@ with st.sidebar:
                 )
 
         # ── 長期記憶 ──────────────────────────────────────────────
-        st.markdown("**長期記憶**")
+        st.markdown(T["chat_memory_long_term"])
         err = st.session_state.memory_error
         records = st.session_state.memory_records
         strategy_map = st.session_state.memory_strategy_map
@@ -994,16 +995,16 @@ with st.sidebar:
         if err:
             st.error(f"取得失敗: {err[:120]}")
         elif records is None:
-            st.caption("「更新」を押して取得")
+            st.caption(T["chat_memory_fetch_prompt"])
         elif not records:
-            st.caption("レコードなし")
+            st.caption(T["chat_memory_no_records"])
         else:
             strategy_options = {"全て": None} | {
                 label: sid
                 for sid, label in strategy_map.items()
             }
             selected_label = st.selectbox(
-                "戦略",
+                T["chat_label_memory_strategy"],
                 options=list(strategy_options.keys()),
                 key="memory_strategy_select",
                 label_visibility="collapsed",
@@ -1018,7 +1019,7 @@ with st.sidebar:
             filtered.sort(key=lambda r: r.get("createdAt") or "")
 
             if not filtered:
-                st.caption("レコードなし")
+                st.caption(T["chat_memory_no_records"])
             else:
                 st.caption(f"{len(filtered)} 件")
                 for r in filtered:
@@ -1047,7 +1048,7 @@ with st.sidebar:
     # ================================================================
     # チャット操作
     # ================================================================
-    if st.button("🗑️ チャット履歴をクリア", use_container_width=True):
+    if st.button(T["chat_btn_clear_history"], use_container_width=True):
         st.session_state.chat_messages = []
         st.session_state.chat_sending = False
         st.session_state.chat_result_box = None
@@ -1075,7 +1076,7 @@ if st.session_state.chat_messages or st.session_state.chat_sending:
             _msg_events = _msg.get("events") or []
             if _msg_events:
                 with st.expander(
-                    f"🤔 思考過程（ターン {_assistant_turn}）",
+                    T["chat_expander_thinking"].format(turn=_assistant_turn),
                     expanded=False,
                 ):
                     _render_events(_msg_events)
@@ -1098,7 +1099,7 @@ if st.session_state.chat_messages or st.session_state.chat_sending:
                     orchestrator_url, st.session_state.chat_session_id
                 )
             if _live_events:
-                with st.expander("🤔 エージェントの思考過程（処理中）", expanded=True):
+                with st.expander(T["chat_expander_thinking_progress"], expanded=True):
                     _render_events(_live_events)
 
     # 自動スクロール: 新メッセージ到着時に最下部へ移動
@@ -1122,9 +1123,9 @@ if st.session_state.chat_messages or st.session_state.chat_sending:
 else:
     # 空チャット時: 案内テキスト + サンプルプロンプトカード
     st.markdown(
-        "<div style='color:#94a3b8;text-align:center;padding:40px 0 16px;font-size:15px;'>"
-        "メッセージを入力してチャットを開始してください"
-        "</div>",
+        f"<div style='color:#94a3b8;text-align:center;padding:40px 0 16px;font-size:15px;'>"
+        f"{T['chat_placeholder']}"
+        f"</div>",
         unsafe_allow_html=True,
     )
     cols = st.columns(len(_SAMPLE_PROMPTS))
@@ -1151,7 +1152,7 @@ if _pending and not st.session_state.chat_sending:
 # ---------------------------------------------------------------------------
 
 if prompt := st.chat_input(
-    "メッセージを入力してください...",
+    T["chat_placeholder"],
     disabled=st.session_state.chat_sending,
 ):
     _send_message(prompt, orchestrator_url, region, request_timeout)

@@ -32,16 +32,17 @@ from dashboard.topology_utils import (
     build_graph_from_compose,
     render_graph_to_html,
 )
+from translations import get_translations
+
+T = get_translations(st.session_state.get("lang", "日本語"))
 
 
 # ---------------------------------------------------------------------------
 # ページ設定
 # ---------------------------------------------------------------------------
 
-st.title("🕸️ MAS Topology Visualization")
-st.caption(
-    "Docker Compose（ローカル静的）または Langfuse（動的）から MAS トポロジーを可視化します。"
-)
+st.title(T["viz_title"])
+st.caption(T["viz_caption"])
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +115,6 @@ def _generate_compose_topology(
             "html_content": "",
             "node_count": 0,
             "edge_count": 0,
-            "summary_label": "サービス数 (静的)",
             "summary_value": 0,
             "trace_count": 0,
             "trace_summaries": [],
@@ -140,7 +140,6 @@ def _generate_compose_topology(
         "html_content": html_content,
         "node_count": G.number_of_nodes(),
         "edge_count": G.number_of_edges(),
-        "summary_label": "サービス数 (静的)",
         "summary_value": service_count,
         "trace_count": 0,
         "trace_summaries": [],
@@ -165,7 +164,6 @@ def _generate_langfuse_topology(
             "html_content": "",
             "node_count": 0,
             "edge_count": 0,
-            "summary_label": "取得トレース数",
             "summary_value": 0,
             "trace_count": 0,
             "trace_summaries": [],
@@ -208,7 +206,6 @@ def _generate_langfuse_topology(
         "html_content": html_content,
         "node_count": G.number_of_nodes(),
         "edge_count": G.number_of_edges(),
-        "summary_label": "取得トレース数",
         "summary_value": len(traces),
         "trace_count": len(traces),
         "trace_summaries": trace_summaries,
@@ -221,56 +218,50 @@ def _generate_langfuse_topology(
 # ---------------------------------------------------------------------------
 
 with st.sidebar:
-    st.header("表示設定")
+    st.header(T["viz_header_settings"])
 
     data_source = st.radio(
-        "トポロジーソース",
-        options=["Docker Compose (ローカル)", "Langfuse (動的)"],
+        T["viz_label_source"],
+        options=[T["viz_option_compose"], T["viz_option_langfuse"]],
         index=0,
-        help=(
-            "Docker Compose: リポジトリのファイル群から構成を自動解析します（Langfuse 不要）。\n"
-            "Langfuse: 実行ログから動的にトポロジーを生成します。"
-        ),
+        help=T["viz_help_source"],
     )
 
     no_physics = st.checkbox(
-        "物理シミュレーションを無効化",
+        T["viz_label_no_physics"],
         value=False,
-        help="ON にすると静的レイアウトになり、大規模グラフで動作が安定します。",
+        help=T["viz_help_no_physics"],
     )
 
     limit = 100
     hours = 24
     host = os.environ.get("LANGFUSE_HOST", "https://us.cloud.langfuse.com")
 
-    if data_source == "Docker Compose (ローカル)":
+    if data_source == T["viz_option_compose"]:
         st.divider()
         compose_file = os.path.join(_REPO_ROOT, "docker-compose.yml")
-        st.caption("解析対象ファイル:")
+        st.caption(T["viz_caption_compose_file"])
         st.code(compose_file, language=None)
-        st.caption(
-            "docker-compose.yml のサービス定義・環境変数・Dockerfile を静的解析して "
-            "トポロジーを生成します。Langfuse は不要です。"
-        )
+        st.caption(T["viz_caption_compose_desc"])
     else:  # Langfuse
         st.divider()
-        st.subheader("Langfuse 取得設定")
+        st.subheader(T["viz_subheader_langfuse"])
 
-        limit = st.slider("取得トレース上限 (件)", min_value=10, max_value=500, value=100, step=10)
+        limit = st.slider(T["viz_label_trace_limit"], min_value=10, max_value=500, value=100, step=10)
         hours = st.number_input(
-            "過去 N 時間分を取得",
+            T["viz_label_hours"],
             min_value=0,
             max_value=720,
             value=24,
             step=1,
-            help="0 にすると時間フィルタなし（最新 N 件のみ）",
+            help=T["viz_help_hours"],
         )
         host = st.text_input(
-            "Langfuse ホスト",
+            T["viz_label_langfuse_host"],
             value=os.environ.get("LANGFUSE_HOST", "https://us.cloud.langfuse.com"),
         )
 
-    generate = st.button("表示を更新", type="primary", use_container_width=True)
+    generate = st.button(T["viz_btn_refresh"], type="primary", use_container_width=True)
 
 
 # ---------------------------------------------------------------------------
@@ -283,8 +274,8 @@ if "viz_result_source" not in st.session_state:
     st.session_state.viz_result_source = None
 
 source_map = {
-    "Docker Compose (ローカル)": "compose",
-    "Langfuse (動的)": "langfuse",
+    T["viz_option_compose"]: "compose",
+    T["viz_option_langfuse"]: "langfuse",
 }
 source_key = source_map[data_source]
 source_changed = st.session_state.viz_result_source != source_key
@@ -293,7 +284,7 @@ if generate or st.session_state.viz_result is None or source_changed:
     if source_key == "compose":
         compose_path = os.path.join(_REPO_ROOT, "docker-compose.yml")
         if not os.path.exists(compose_path):
-            st.error(f"docker-compose.yml が見つかりません: {compose_path}")
+            st.error(T["viz_error_no_compose"].format(path=compose_path))
             st.stop()
         try:
             st.session_state.viz_result = _generate_compose_topology(
@@ -303,7 +294,7 @@ if generate or st.session_state.viz_result is None or source_changed:
             )
             st.session_state.viz_result_source = source_key
         except Exception as e:
-            st.error(f"Docker Compose トポロジー生成エラー: {e}")
+            st.error(T["viz_error_compose"].format(e=e))
             st.stop()
     else:  # langfuse
         try:
@@ -315,18 +306,18 @@ if generate or st.session_state.viz_result is None or source_changed:
             )
             st.session_state.viz_result_source = source_key
         except EnvironmentError as e:
-            st.error(f"環境変数エラー: {e}")
-            st.info("LANGFUSE_PUBLIC_KEY と LANGFUSE_SECRET_KEY を設定してから再試行してください。")
+            st.error(T["viz_error_env"].format(e=e))
+            st.info(T["viz_info_env_hint"])
             st.stop()
         except RuntimeError as e:
-            st.error(f"グラフ生成エラー: {e}")
+            st.error(T["viz_error_graph"].format(e=e))
             st.stop()
 
 result = st.session_state.viz_result
 html_content = result.get("html_content", "")
 node_count = result.get("node_count", 0)
 edge_count = result.get("edge_count", 0)
-summary_label = result.get("summary_label", "件数")
+summary_label = T["viz_summary_label_compose"] if source_key == "compose" else T["viz_summary_label_langfuse"]
 summary_value = result.get("summary_value", 0)
 trace_summaries = result.get("trace_summaries", [])
 trace_count = int(result.get("trace_count", 0))
@@ -342,12 +333,9 @@ if schema_json:
 
 if not html_content:
     if source_key == "compose":
-        st.warning("docker-compose.yml から描画できるコンポーネントが見つかりませんでした。")
+        st.warning(T["viz_warning_no_compose"])
     else:
-        st.warning(
-            "指定した条件でトレースが見つかりませんでした。\n"
-            "取得件数・時間範囲・Langfuse ホストを確認してください。"
-        )
+        st.warning(T["viz_warning_no_langfuse"])
     st.stop()
 
 
@@ -357,23 +345,23 @@ if not html_content:
 
 col1, col2, col3, col4 = st.columns(4)
 col1.metric(summary_label, summary_value)
-col2.metric("コンポーネント数 (ノード)", node_count)
-col3.metric("通信経路数 (エッジ)", edge_count)
+col2.metric(T["viz_metric_components"], node_count)
+col3.metric(T["viz_metric_edges"], edge_count)
 with col4:
     if schema_json:
         schema_file = "compose_schema.json" if source_key == "compose" else "system_schema.json"
         st.download_button(
-            label="スキーマ JSON をダウンロード",
+            label=T["viz_btn_download_schema"],
             data=json.dumps(schema_json, ensure_ascii=False, indent=2),
             file_name=schema_file,
             mime="application/json",
-            help="Threat Modeling ページでも利用できます。",
+            help=T["viz_help_download_schema"],
         )
 
 if source_key == "compose":
-    st.caption("現在表示中: Docker Compose ローカル静的トポロジー")
+    st.caption(T["viz_caption_current_compose"])
 else:
-    st.caption("現在表示中: Langfuse の動的トポロジー")
+    st.caption(T["viz_caption_current_langfuse"])
 
 st.divider()
 
@@ -382,8 +370,8 @@ st.divider()
 # トポロジーグラフ（pyvis HTML）
 # ---------------------------------------------------------------------------
 
-st.subheader("コンポーネントトポロジー")
-st.caption("ノードをドラッグして移動、スクロールでズーム、ホバーで詳細を確認できます。")
+st.subheader(T["viz_subheader_topology"])
+st.caption(T["viz_caption_topology"])
 components.html(html_content, height=820, scrolling=False)
 
 
@@ -393,12 +381,12 @@ components.html(html_content, height=820, scrolling=False)
 
 if source_key == "langfuse":
     st.divider()
-    with st.expander(f"取得トレース一覧 ({trace_count} 件)", expanded=False):
+    with st.expander(T["viz_expander_traces"].format(count=trace_count), expanded=False):
         if trace_summaries:
             import pandas as pd
 
             df_traces = pd.DataFrame(trace_summaries)
-            df_traces.columns = ["タイムスタンプ", "Trace ID", "トレース名"]
+            df_traces.columns = [T["viz_col_timestamp"], T["viz_col_trace_id"], T["viz_col_trace_name"]]
             st.dataframe(df_traces, use_container_width=True, hide_index=True)
         else:
-            st.info("トレース情報がありません。")
+            st.info(T["viz_info_no_traces"])
