@@ -8,10 +8,10 @@ import logging
 from pathlib import Path
 from strands import Agent
 from strands.telemetry import StrandsTelemetry
-from strands.experimental.steering import LLMSteeringHandler
+from strands.experimental.steering import LLMSteeringHandler, Guide
 from strands.models import BedrockModel
 from strands_tools.a2a_client import A2AClientToolProvider
-from fastapi import FastAPI, Request
+from fastapi import BackgroundTasks, FastAPI, Request
 from fastapi.responses import JSONResponse
 import uvicorn
 
@@ -57,6 +57,30 @@ def _write_steering_guide_event(session_id: str, tool_name: str, reason: str) ->
         logging.warning("Failed to write steering event: %s", e)
 
 
+# ---------------------------------------------------------------------------
+# セキュリティ設定（ダッシュボードから POST /security-config で上書き）
+# 初期値はすべて空。受講者がダッシュボード上で設定する。
+# ---------------------------------------------------------------------------
+
+#: エージェント名 → 信頼済み URL のマッピング（Layer 1: エージェント認証）
+TRUSTED_AGENT_REGISTRY: dict[str, str] = {}
+
+#: エージェント名 → 許可タスク種別リスト（Layer 2: タスク権限）
+AGENT_TASK_PERMISSIONS: dict[str, list[str]] = {}
+
+#: Layer 2 の判定モード。"keyword"（決定論的）または "llm"（非決定論的）
+LAYER2_MODE: str = "keyword"
+
+#: Layer 2 キーワード対応表（フレームとして提供。受講者は変更不要）
+TASK_KEYWORDS: dict[str, list[str]] = {
+    "search":       ["検索", "探して", "教えて", "おすすめ"],
+    "details":      ["詳細", "情報"],
+    "reviews":      ["口コミ", "レビュー"],
+    "availability": ["空室", "空き"],
+    "reservation":  ["予約"],
+}
+
+
 class LoggingSteeringHandler(LLMSteeringHandler):
     """Guide 判定を進捗ログ（JSONL）に記録する LLMSteeringHandler サブクラス。
 
@@ -93,6 +117,153 @@ class LoggingSteeringHandler(LLMSteeringHandler):
                 reason,
             )
         return action
+
+
+class SecureSteeringHandler(LoggingSteeringHandler):
+    """T13/T9 対策: エージェント認証 + タスク委任前検証 + LLM Steering の3層防御。
+
+    ダッシュボードから POST /security-config で設定された値に基づき、
+    a2a_send_message の呼び出しを以下の順で評価する:
+
+      Layer 1: エージェント認証（TRUSTED_AGENT_REGISTRY が空の場合はスキップ）
+        → 未登録 URL への呼び出しを即 Guide でブロック
+
+      Layer 2: タスク権限（AGENT_TASK_PERMISSIONS が空の場合はスキップ）
+        → 許可されていないタスク種別への委任を即 Guide でブロック
+        → LAYER2_MODE == "keyword": キーワード照合（決定論的）
+        → LAYER2_MODE == "llm":     LLM 分類（非決定論的）
+
+      Layer 3: LLM Steering（既存の意味的・文脈的評価）
+        → インジェクションペイロード等を検知
+
+    レジストリ・権限がともに空の場合、Layer 1/2 はスキップされ
+    Layer 3 のみが動作する（設定前の状態 = 攻撃が通過する）。
+    """
+
+    def __init__(self, session_id: str, **kwargs):
+        super().__init__(session_id=session_id, **kwargs)
+
+    # ------------------------------------------------------------------
+    # Layer 1 ヘルパー: target_agent_url → エージェント名の解決
+    # ------------------------------------------------------------------
+    def _resolve_agent_name(self, tool_use) -> str | None:
+        """target_agent_url を TRUSTED_AGENT_REGISTRY に照合してエージェント名を返す。
+        未登録の場合は None を返す。
+        """
+        inp = tool_use.get("input", {}) if isinstance(tool_use, dict) else {}
+        url = inp.get("target_agent_url", "").rstrip("/")
+        for name, registered_url in TRUSTED_AGENT_REGISTRY.items():
+            if registered_url and registered_url.rstrip("/") == url:
+                return name
+        return None
+
+    # ------------------------------------------------------------------
+    # Layer 2 ヘルパー: キーワードによるタスク種別判定（決定論的）
+    # ------------------------------------------------------------------
+    def _classify_task_keyword(self, message_text: str) -> str:
+        """message_text に含まれるキーワードからタスク種別を返す。
+        TASK_KEYWORDS の対応表を先頭から照合し、最初に一致した種別を返す。
+        一致なしの場合は "unknown" を返す。
+        """
+        for task_type, keywords in TASK_KEYWORDS.items():
+            if any(kw in message_text for kw in keywords):
+                return task_type
+        return "unknown"
+
+    # ------------------------------------------------------------------
+    # Layer 2 ヘルパー: LLM によるタスク種別判定（非決定論的）
+    # ------------------------------------------------------------------
+    async def _classify_task_llm(self, message_text: str) -> str:
+        """LLM を呼び出して message_text のタスク種別を分類する。
+        返値は "search" / "details" / "reviews" / "availability" / "reservation" / "unknown"
+        のいずれか。
+        """
+        import boto3
+        import asyncio
+
+        def _invoke() -> str:
+            client = boto3.client(
+                "bedrock-runtime",
+                region_name=os.environ.get("AWS_DEFAULT_REGION", "us-west-2"),
+            )
+            model_id = os.environ.get("AWS_BEDROCK_MODEL_ID", "")
+            prompt = (
+                "以下のメッセージが意図するタスク種別を1つだけ返してください。\n"
+                "選択肢: search / details / reviews / availability / reservation / unknown\n"
+                f"メッセージ: {message_text}\n"
+                "タスク種別のみを1単語で返してください。"
+            )
+            resp = client.converse(
+                modelId=model_id,
+                messages=[{"role": "user", "content": [{"text": prompt}]}],
+            )
+            raw = resp["output"]["message"]["content"][0]["text"].strip().lower()
+            valid = {"search", "details", "reviews", "availability", "reservation"}
+            return raw if raw in valid else "unknown"
+
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, _invoke)
+
+    # ------------------------------------------------------------------
+    # メインの評価ロジック
+    # ------------------------------------------------------------------
+    async def steer_before_tool(self, *, agent, tool_use, **kwargs):
+        tool_name = (
+            tool_use.get("name", "") if isinstance(tool_use, dict)
+            else getattr(tool_use, "name", "")
+        )
+
+        # a2a_send_message 以外は既存ロジックへ
+        if tool_name != "a2a_send_message":
+            return await super().steer_before_tool(
+                agent=agent, tool_use=tool_use, **kwargs
+            )
+
+        # ------------------------------------------------------------------
+        # Layer 1: エージェント認証
+        # TRUSTED_AGENT_REGISTRY が空の場合はスキップ（防御 OFF 状態）。
+        # 設定済みの場合、未登録 URL への呼び出しを即ブロックする。
+        # ------------------------------------------------------------------
+        agent_name: str | None = None
+        if TRUSTED_AGENT_REGISTRY:
+            agent_name = self._resolve_agent_name(tool_use)
+            if agent_name is None:
+                inp = tool_use.get("input", {}) if isinstance(tool_use, dict) else {}
+                url = inp.get("target_agent_url", "不明")
+                reason = f"未登録エージェントへの呼び出しをブロックしました（T13/T9）: {url}"
+                _write_steering_guide_event(self._log_session_id, tool_name, reason)
+                logging.warning("[Layer1 BLOCK] %s", reason)
+                return Guide(reason=reason)
+
+        # ------------------------------------------------------------------
+        # Layer 2: タスク権限
+        # AGENT_TASK_PERMISSIONS が空、または agent_name が未確定の場合はスキップ。
+        # 設定済みの場合、許可外のタスク種別への委任を即ブロックする。
+        # ------------------------------------------------------------------
+        if AGENT_TASK_PERMISSIONS and agent_name:
+            inp = tool_use.get("input", {}) if isinstance(tool_use, dict) else {}
+            message_text = inp.get("message_text", "")
+            if LAYER2_MODE == "llm":
+                task_type = await self._classify_task_llm(message_text)
+            else:
+                task_type = self._classify_task_keyword(message_text)
+
+            allowed = AGENT_TASK_PERMISSIONS.get(agent_name, [])
+            if task_type not in allowed:
+                reason = (
+                    f"{agent_name} への '{task_type}' タスクは許可されていません"
+                    f"（許可: {allowed}）"
+                )
+                _write_steering_guide_event(self._log_session_id, tool_name, reason)
+                logging.warning("[Layer2 BLOCK] %s", reason)
+                return Guide(reason=reason)
+
+        # ------------------------------------------------------------------
+        # Layer 3: LLM Steering（意味的・文脈的評価）
+        # ------------------------------------------------------------------
+        return await super().steer_before_tool(
+            agent=agent, tool_use=tool_use, **kwargs
+        )
 
 
 def _extract_a2a_reply(raw: str) -> str:
@@ -393,7 +564,7 @@ def _cleanup_expired_sessions() -> None:
 
 
 @app.post("/invocations")
-async def invoke_agent(request: Request):
+async def invoke_agent(request: Request, background_tasks: BackgroundTasks):
     payload = await request.json()
     prompt = payload.get("prompt")
     session_id = payload.get("session_id", str(int(time.time())))
@@ -407,7 +578,7 @@ async def invoke_agent(request: Request):
     # session_id をインスタンス属性として持つことで、Strands が async フックを
     # 別スレッドで実行しても self._log_session_id で正しく参照できる。
     # LedgerProvider の steering_context もセッション間で独立する。
-    session_steering_handler = LoggingSteeringHandler(
+    session_steering_handler = SecureSteeringHandler(
         session_id=session_id,
         model=BedrockModel(model_id=os.environ.get("AWS_BEDROCK_MODEL_ID")),
         system_prompt=steering_prompt,
@@ -445,15 +616,12 @@ async def invoke_agent(request: Request):
         # orchestrator(prompt) は同期ブロッキング呼び出しのため、スレッドプールで実行する。
         # そのままイベントループで呼ぶと uvicorn のループがブロックされ、
         # /progress ポーリングリクエストが処理できなくなる（進捗が最後に一瞬しか見えない問題）。
-        # session_manager.close() で未送信バッファを確実にフラッシュする。
-        def _invoke_with_memory() -> object:
-            try:
-                return orchestrator(prompt)
-            finally:
-                session_manager.close()
-
+        # session_manager.close() は AgentCore Memory の Reflection（記憶統合 LLM 呼び出し）を
+        # トリガーするため完了まで数百秒かかることがある。レスポンスを返した後に
+        # BackgroundTasks として実行することでリクエストのブロックを回避する。
         loop = asyncio.get_running_loop()
-        response = await loop.run_in_executor(None, _invoke_with_memory)
+        response = await loop.run_in_executor(None, lambda: orchestrator(prompt))
+        background_tasks.add_task(session_manager.close)
 
     # ------------------------------------------------------------------
     # フォールバック: インメモリキャッシュモード（AGENTCORE_MEMORY_ID 未設定時）
@@ -517,6 +685,47 @@ async def get_progress(session_id: str):
 
     events.sort(key=lambda e: e.get("ts", 0))
     return JSONResponse({"events": events})
+
+
+@app.post("/security-config")
+async def set_security_config(request: Request):
+    """ダッシュボードからセキュリティ設定を受け取ってモジュール変数を上書きする。
+
+    リクエスト JSON:
+      {
+        "registry":    {"エージェント名": "URL", ...},
+        "permissions": {"エージェント名": ["search", ...], ...},
+        "layer2_mode": "keyword" | "llm"
+      }
+    """
+    global TRUSTED_AGENT_REGISTRY, AGENT_TASK_PERMISSIONS, LAYER2_MODE
+    payload = await request.json()
+    if "registry" in payload:
+        TRUSTED_AGENT_REGISTRY = payload["registry"]
+    if "permissions" in payload:
+        AGENT_TASK_PERMISSIONS = payload["permissions"]
+    if "layer2_mode" in payload and payload["layer2_mode"] in ("keyword", "llm"):
+        LAYER2_MODE = payload["layer2_mode"]
+    logging.info(
+        "[SecurityConfig] registry=%d agents, layer2_mode=%s",
+        len(TRUSTED_AGENT_REGISTRY),
+        LAYER2_MODE,
+    )
+    return JSONResponse({
+        "status": "ok",
+        "registered_agents": len(TRUSTED_AGENT_REGISTRY),
+        "layer2_mode": LAYER2_MODE,
+    })
+
+
+@app.get("/security-status")
+def get_security_status():
+    """現在のセキュリティ設定を返す（ダッシュボードの確認ボタン用）。"""
+    return JSONResponse({
+        "registry":    TRUSTED_AGENT_REGISTRY,
+        "permissions": AGENT_TASK_PERMISSIONS,
+        "layer2_mode": LAYER2_MODE,
+    })
 
 
 @app.get("/ping")
