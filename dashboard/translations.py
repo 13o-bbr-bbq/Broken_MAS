@@ -55,6 +55,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         ),
         # steering
         "chat_section_steering": "⚖️ Steering ルール",
+        "chat_section_security": "🔒 Steering & Security",
         "chat_help_steering_section": (
             "オーケストレータがエージェントの A2A 呼び出し前に実行する Guardian Agent"
             "（オーケストレータの行動を監視するエージェント）のシステムプロンプト。"
@@ -64,6 +65,24 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "chat_btn_steering_save": "💾 保存",
         "chat_btn_steering_reset": "↩️ リセット",
         "chat_success_steering_saved": "保存しました",
+        # security tabs
+        "chat_tab_llm_steering":           "LLM Steering",
+        "chat_tab_agent_registry":         "エージェント認証",
+        "chat_tab_task_permissions":        "タスク権限",
+        # registry tab
+        "chat_label_agent_name":           "エージェント名",
+        "chat_label_agent_url":            "URL",
+        "chat_btn_registry_add_row":       "＋ 行を追加",
+        "chat_btn_registry_apply":         "適用",
+        "chat_btn_registry_check":         "現在の設定を確認",
+        "chat_success_security_applied":   "オーケストレーターに設定を送信しました",
+        "chat_error_security_apply":       "送信失敗: {error}",
+        "chat_info_registry_empty":        "エージェントが未登録です",
+        # permissions tab
+        "chat_label_layer2_mode":          "判定モード",
+        "chat_label_layer2_keyword":       "キーワードマッチ（高速・決定論的）",
+        "chat_label_layer2_llm":           "LLM 分類（高精度・非決定論的）",
+        "chat_info_permissions_no_agents": "エージェント認証タブでエージェントを登録してください",
         # memory
         "chat_section_memory": "🧠 AgentCore Memory",
         "chat_help_memory_section": (
@@ -81,6 +100,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "chat_memory_short_term": "**短期記憶**",
         "chat_memory_long_term": "**長期記憶**",
         "chat_memory_fetch_prompt": "「更新」を押して取得",
+        "chat_memory_record_count_warning": "件数が多いとタイムアウトが発生する場合があります。定期的に「🗑️ 全削除」してください。",
         "chat_memory_no_events": "イベントなし",
         "chat_memory_no_records": "レコードなし",
         "chat_label_memory_strategy": "戦略",
@@ -302,6 +322,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         ),
         # steering
         "chat_section_steering": "⚖️ Steering Rules",
+        "chat_section_security": "🔒 Steering & Security",
         "chat_help_steering_section": (
             "System prompt for the Guardian Agent that runs before the orchestrator makes A2A calls "
             "(an agent that monitors orchestrator behavior). "
@@ -311,6 +332,24 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "chat_btn_steering_save": "💾 Save",
         "chat_btn_steering_reset": "↩️ Reset",
         "chat_success_steering_saved": "Saved.",
+        # security tabs
+        "chat_tab_llm_steering":           "LLM Steering",
+        "chat_tab_agent_registry":         "Agent Registry",
+        "chat_tab_task_permissions":        "Task Permissions",
+        # registry tab
+        "chat_label_agent_name":           "Agent Name",
+        "chat_label_agent_url":            "URL",
+        "chat_btn_registry_add_row":       "+ Add Row",
+        "chat_btn_registry_apply":         "Apply",
+        "chat_btn_registry_check":         "Check Current Config",
+        "chat_success_security_applied":   "Configuration sent to orchestrator.",
+        "chat_error_security_apply":       "Failed to send: {error}",
+        "chat_info_registry_empty":        "No agents registered.",
+        # permissions tab
+        "chat_label_layer2_mode":          "Detection Mode",
+        "chat_label_layer2_keyword":       "Keyword Match (fast, deterministic)",
+        "chat_label_layer2_llm":           "LLM Classification (accurate, non-deterministic)",
+        "chat_info_permissions_no_agents": "Register agents in the Agent Registry tab first.",
         # memory
         "chat_section_memory": "🧠 AgentCore Memory",
         "chat_help_memory_section": (
@@ -328,6 +367,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "chat_memory_short_term": "**Short-term Memory**",
         "chat_memory_long_term": "**Long-term Memory**",
         "chat_memory_fetch_prompt": "Press 'Refresh' to load",
+        "chat_memory_record_count_warning": "A large number of records may cause timeouts. Periodically use '🗑️ Delete All' to clear them.",
         "chat_memory_no_events": "No events",
         "chat_memory_no_records": "No records",
         "chat_label_memory_strategy": "Strategy",

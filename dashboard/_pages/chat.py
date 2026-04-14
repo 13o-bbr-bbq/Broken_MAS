@@ -38,7 +38,6 @@ from pathlib import Path
 import boto3
 import requests
 import streamlit as st
-import streamlit.components.v1 as _components
 
 _REPO_ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
 sys.path.insert(0, _REPO_ROOT)
@@ -193,6 +192,70 @@ def _delete_all_memory_records(
     except Exception as e:
         logger.warning("Memory 全削除失敗: %s", e)
         return 0, str(e)
+
+
+# ---------------------------------------------------------------------------
+# 長期記憶: 個別レコード削除
+# ---------------------------------------------------------------------------
+
+def _delete_single_memory_record(
+    memory_id: str, region: str, record_id: str
+) -> tuple[bool, str | None]:
+    """指定した memoryRecordId を1件だけ削除する。
+
+    Returns:
+        (success, error_message)
+    """
+    try:
+        client = boto3.client("bedrock-agentcore", region_name=region)
+        client.batch_delete_memory_records(
+            memoryId=memory_id,
+            records=[{"memoryRecordId": record_id}],
+        )
+        return True, None
+    except Exception as e:
+        logger.warning("Memory 個別削除失敗: record_id=%s err=%s", record_id, e)
+        return False, str(e)
+
+
+# ---------------------------------------------------------------------------
+# 長期記憶: 不審レコード検出
+# ---------------------------------------------------------------------------
+
+# Scenario C（メモリポイズニング）で埋め込まれる攻撃ペイロードのパターン
+_SUSPICIOUS_KEYWORDS: list[str] = [
+    "special_info", "special_protocol", "concierge_service",
+    "auto_booking", "SP-PLAT", "platinum", "プラチナ", "SpecialUser",
+    "宿泊管理システム", "標準連携プロトコル",
+]
+
+# 異常に低い価格表現（ホテル予約文脈で ¥10,000 未満は要注意）
+import re as _re_mem
+_SUSPICIOUS_PRICE_RE = _re_mem.compile(
+    r"[¥\\$]\s*([1-9]\d{0,3})\b"  # ¥1〜¥9999 の価格表現
+)
+
+
+def _check_suspicious(text: str) -> tuple[bool, str]:
+    """テキストが不審なメモリレコードかどうかを判定する。
+
+    Returns:
+        (is_suspicious, reason)
+    """
+    lower = text.lower()
+
+    # キーワード検査
+    for kw in _SUSPICIOUS_KEYWORDS:
+        if kw.lower() in lower:
+            return True, f"攻撃関連キーワードを検出: `{kw}`"
+
+    # 異常低価格検査
+    for m in _SUSPICIOUS_PRICE_RE.finditer(text):
+        amount = int(m.group(1))
+        if amount < 10000:
+            return True, f"異常な低価格を検出: {m.group(0)}"
+
+    return False, ""
 
 
 def _fetch_short_term_memory(
@@ -730,6 +793,16 @@ if "stm_events" not in st.session_state:
 if "stm_error" not in st.session_state:
     st.session_state.stm_error = None
 
+# セキュリティ設定（エージェント認証・タスク権限）
+if "security_registry" not in st.session_state:
+    # [{"name": "...", "url": "..."}, ...] の形式
+    st.session_state.security_registry = [{"name": "", "url": ""}]
+if "security_permissions" not in st.session_state:
+    # {"エージェント名": ["search", ...], ...} の形式
+    st.session_state.security_permissions = {}
+if "security_layer2_mode" not in st.session_state:
+    st.session_state.security_layer2_mode = "keyword"
+
 # ---------------------------------------------------------------------------
 # バックグラウンドスレッドの完了チェック（スクリプト先頭）
 #
@@ -867,29 +940,213 @@ with st.sidebar:
     st.divider()
 
     # ================================================================
-    # ⚖️ Steering ルール
+    # 🔒 Steering & Security
     # ================================================================
-    st.subheader(T["chat_section_steering"],
+    st.subheader(T["chat_section_security"],
                  help=T["chat_help_steering_section"])
 
-    steering_prompt_input = st.text_area(
-        "Steering プロンプト",
-        value=st.session_state.steering_prompt,
-        height=160,
-        label_visibility="collapsed",
-    )
-    st.session_state.steering_prompt = steering_prompt_input
+    _tab_steering, _tab_registry, _tab_permissions = st.tabs([
+        T["chat_tab_llm_steering"],
+        T["chat_tab_agent_registry"],
+        T["chat_tab_task_permissions"],
+    ])
 
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button(T["chat_btn_steering_save"], use_container_width=True):
-            _STEERING_PROMPT_FILE.write_text(steering_prompt_input, encoding="utf-8")
-            st.success(T["chat_success_steering_saved"])
-    with col2:
-        if st.button(T["chat_btn_steering_reset"], use_container_width=True):
-            _STEERING_PROMPT_FILE.unlink(missing_ok=True)
-            st.session_state.steering_prompt = _STEERING_SYSTEM_PROMPT_DEFAULT
+    # ----------------------------------------------------------------
+    # Tab 1: LLM Steering（既存のテキストエリアをそのまま移動）
+    # ----------------------------------------------------------------
+    with _tab_steering:
+        steering_prompt_input = st.text_area(
+            "Steering プロンプト",
+            value=st.session_state.steering_prompt,
+            height=160,
+            label_visibility="collapsed",
+        )
+        st.session_state.steering_prompt = steering_prompt_input
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button(T["chat_btn_steering_save"], use_container_width=True,
+                         key="btn_steering_save"):
+                _STEERING_PROMPT_FILE.write_text(steering_prompt_input, encoding="utf-8")
+                st.success(T["chat_success_steering_saved"])
+        with col2:
+            if st.button(T["chat_btn_steering_reset"], use_container_width=True,
+                         key="btn_steering_reset"):
+                _STEERING_PROMPT_FILE.unlink(missing_ok=True)
+                st.session_state.steering_prompt = _STEERING_SYSTEM_PROMPT_DEFAULT
+                st.rerun()
+
+    # ----------------------------------------------------------------
+    # Tab 2: エージェント認証（レジストリ設定）
+    # ----------------------------------------------------------------
+    with _tab_registry:
+        _registry: list[dict] = st.session_state.security_registry
+
+        # 行の入力フィールドを動的に描画
+        _rows_to_delete = []
+        for _i, _row in enumerate(_registry):
+            _col_name, _col_url, _col_del = st.columns([3, 4, 1])
+            with _col_name:
+                _registry[_i]["name"] = st.text_input(
+                    T["chat_label_agent_name"],
+                    value=_row.get("name", ""),
+                    key=f"reg_name_{_i}",
+                    label_visibility="collapsed" if _i > 0 else "visible",
+                    placeholder="Hotel Search Agent",
+                )
+            with _col_url:
+                _registry[_i]["url"] = st.text_input(
+                    T["chat_label_agent_url"],
+                    value=_row.get("url", ""),
+                    key=f"reg_url_{_i}",
+                    label_visibility="collapsed" if _i > 0 else "visible",
+                    placeholder="http://a2a-agent-1:9011/",
+                )
+            with _col_del:
+                # ラベルの高さ分だけ1行目はスペースを入れて揃える
+                if _i == 0:
+                    st.write("")
+                if st.button("🗑", key=f"reg_del_{_i}", help="この行を削除"):
+                    _rows_to_delete.append(_i)
+
+        # 削除処理（逆順で pop してインデックスずれを防ぐ）
+        for _idx in sorted(_rows_to_delete, reverse=True):
+            _registry.pop(_idx)
+        if _rows_to_delete:
             st.rerun()
+
+        if st.button(T["chat_btn_registry_add_row"], use_container_width=True):
+            _registry.append({"name": "", "url": ""})
+            st.rerun()
+
+        st.divider()
+
+        _reg_col1, _reg_col2 = st.columns(2)
+        with _reg_col1:
+            if st.button(T["chat_btn_registry_apply"], use_container_width=True,
+                         type="primary", key="btn_registry_apply"):
+                _registry_dict = {
+                    r["name"]: r["url"]
+                    for r in _registry
+                    if r.get("name") and r.get("url")
+                }
+                # タスク権限の許可リストを現在の session_state から読み取る
+                _permissions_dict = st.session_state.security_permissions
+                try:
+                    _resp = requests.post(
+                        orchestrator_url.rstrip("/") + "/security-config",
+                        json={
+                            "registry":    _registry_dict,
+                            "permissions": _permissions_dict,
+                            "layer2_mode": st.session_state.security_layer2_mode,
+                        },
+                        timeout=10,
+                    )
+                    _resp.raise_for_status()
+                    st.success(T["chat_success_security_applied"])
+                except Exception as _e:
+                    st.error(T["chat_error_security_apply"].format(error=str(_e)))
+
+        with _reg_col2:
+            if st.button(T["chat_btn_registry_check"], use_container_width=True,
+                         key="btn_registry_check"):
+                try:
+                    _status_resp = requests.get(
+                        orchestrator_url.rstrip("/") + "/security-status",
+                        timeout=5,
+                    )
+                    _status_resp.raise_for_status()
+                    st.session_state["_security_status"] = _status_resp.json()
+                except Exception as _e:
+                    st.session_state["_security_status"] = {"error": str(_e)}
+
+        if "_security_status" in st.session_state:
+            with st.expander("現在の設定", expanded=True):
+                st.json(st.session_state["_security_status"])
+
+    # ----------------------------------------------------------------
+    # Tab 3: タスク権限（権限設定 + 判定モード切り替え）
+    # ----------------------------------------------------------------
+    with _tab_permissions:
+        # --- 判定モード選択 ---
+        _mode_options = {
+            "keyword": T["chat_label_layer2_keyword"],
+            "llm":     T["chat_label_layer2_llm"],
+        }
+        _mode_labels = list(_mode_options.values())
+        _mode_keys   = list(_mode_options.keys())
+        _current_mode_idx = _mode_keys.index(
+            st.session_state.security_layer2_mode
+            if st.session_state.security_layer2_mode in _mode_keys else "keyword"
+        )
+        _selected_label = st.radio(
+            T["chat_label_layer2_mode"],
+            options=_mode_labels,
+            index=_current_mode_idx,
+            key="radio_layer2_mode",
+        )
+        st.session_state.security_layer2_mode = _mode_keys[_mode_labels.index(_selected_label)]
+
+        st.divider()
+
+        # --- 各エージェントの権限チェックボックス ---
+        _TASK_TYPES = ["search", "details", "reviews", "availability", "reservation"]
+        _TASK_LABELS = {
+            "search":       "ホテル検索",
+            "details":      "ホテル詳細",
+            "reviews":      "口コミ取得",
+            "availability": "空室確認",
+            "reservation":  "予約",
+        }
+
+        _active_agents = [
+            r["name"] for r in st.session_state.security_registry
+            if r.get("name") and r.get("url")
+        ]
+
+        if not _active_agents:
+            st.info(T["chat_info_permissions_no_agents"])
+        else:
+            _permissions: dict[str, list[str]] = st.session_state.security_permissions
+            for _agent_name in _active_agents:
+                st.markdown(f"**{_agent_name}**")
+                _current_perms = _permissions.get(_agent_name, [])
+                _new_perms = []
+                _perm_cols = st.columns(len(_TASK_TYPES))
+                for _col, _task in zip(_perm_cols, _TASK_TYPES):
+                    with _col:
+                        if st.checkbox(
+                            _TASK_LABELS[_task],
+                            value=_task in _current_perms,
+                            key=f"perm_{_agent_name}_{_task}",
+                        ):
+                            _new_perms.append(_task)
+                _permissions[_agent_name] = _new_perms
+            st.session_state.security_permissions = _permissions
+
+        st.divider()
+
+        if st.button(T["chat_btn_registry_apply"], use_container_width=True,
+                     type="primary", key="btn_permissions_apply"):
+            _registry_dict = {
+                r["name"]: r["url"]
+                for r in st.session_state.security_registry
+                if r.get("name") and r.get("url")
+            }
+            try:
+                _resp = requests.post(
+                    orchestrator_url.rstrip("/") + "/security-config",
+                    json={
+                        "registry":    _registry_dict,
+                        "permissions": st.session_state.security_permissions,
+                        "layer2_mode": st.session_state.security_layer2_mode,
+                    },
+                    timeout=10,
+                )
+                _resp.raise_for_status()
+                st.success(T["chat_success_security_applied"])
+            except Exception as _e:
+                st.error(T["chat_error_security_apply"].format(error=str(_e)))
 
     st.divider()
 
@@ -987,10 +1244,17 @@ with st.sidebar:
                 )
 
         # ── 長期記憶 ──────────────────────────────────────────────
-        st.markdown(T["chat_memory_long_term"])
         err = st.session_state.memory_error
         records = st.session_state.memory_records
         strategy_map = st.session_state.memory_strategy_map
+
+        # 件数を見出しに表示
+        record_count = len(records) if records is not None else None
+        if record_count is not None:
+            st.markdown(f"{T['chat_memory_long_term']}（{record_count}件）")
+            st.warning(T["chat_memory_record_count_warning"])
+        else:
+            st.markdown(T["chat_memory_long_term"])
 
         if err:
             st.error(f"取得失敗: {err[:120]}")
@@ -1021,27 +1285,74 @@ with st.sidebar:
             if not filtered:
                 st.caption(T["chat_memory_no_records"])
             else:
-                st.caption(f"{len(filtered)} 件")
+                suspicious_count = sum(
+                    1 for r in filtered
+                    if _check_suspicious(r.get("content", {}).get("text", ""))[0]
+                )
+                count_label = f"{len(filtered)} 件"
+                if suspicious_count:
+                    count_label += f"　⚠️ {suspicious_count} 件が不審"
+                st.caption(count_label)
+
                 for r in filtered:
                     text = r.get("content", {}).get("text", "")
+                    record_id = r.get("memoryRecordId", "")
                     created = r.get("createdAt")
                     ts = (
                         created.strftime("%m/%d %H:%M")
                         if hasattr(created, "strftime")
                         else ""
                     )
-                    st.markdown(
-                        f"<div style='font-size:11px;color:#1e293b;"
-                        f"padding:5px 8px;"
-                        f"background:#f1f5f9;border-left:3px solid #64748b;"
-                        f"margin:3px 0;border-radius:0 4px 4px 0;"
-                        f"word-break:break-word;'>"
-                        f"{_html.escape(text[:200])}"
-                        f"<span style='display:block;color:#64748b;"
-                        f"font-size:10px;margin-top:2px;'>{ts}</span>"
-                        f"</div>",
-                        unsafe_allow_html=True,
-                    )
+                    is_suspicious, reason = _check_suspicious(text)
+
+                    if is_suspicious:
+                        border_color = "#ef4444"   # 赤
+                        bg_color     = "#fff1f2"
+                        prefix       = "⚠️ "
+                        reason_html  = (
+                            f"<span style='display:block;color:#ef4444;"
+                            f"font-size:10px;margin-top:2px;'>{_html.escape(reason)}</span>"
+                        )
+                    else:
+                        border_color = "#64748b"   # グレー
+                        bg_color     = "#f1f5f9"
+                        prefix       = ""
+                        reason_html  = ""
+
+                    col_text, col_btn = st.columns([10, 1])
+                    with col_text:
+                        st.markdown(
+                            f"<div style='font-size:11px;color:#1e293b;"
+                            f"padding:5px 8px;"
+                            f"background:{bg_color};"
+                            f"border-left:3px solid {border_color};"
+                            f"margin:3px 0;border-radius:0 4px 4px 0;"
+                            f"word-break:break-word;'>"
+                            f"{prefix}{_html.escape(text[:200])}"
+                            f"{reason_html}"
+                            f"<span style='display:block;color:#64748b;"
+                            f"font-size:10px;margin-top:2px;'>{ts}</span>"
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
+                    with col_btn:
+                        if record_id and st.button(
+                            "🗑",
+                            key=f"mem_del_{record_id}",
+                            help="このレコードを削除",
+                        ):
+                            ok, del_err = _delete_single_memory_record(
+                                _AGENTCORE_MEMORY_ID, region, record_id
+                            )
+                            if ok:
+                                st.session_state.memory_records = [
+                                    rec for rec in st.session_state.memory_records
+                                    if rec.get("memoryRecordId") != record_id
+                                ]
+                                st.toast("レコードを削除しました")
+                                st.rerun()
+                            else:
+                                st.error(f"削除失敗: {del_err}")
 
         st.divider()
 
@@ -1103,7 +1414,7 @@ if st.session_state.chat_messages or st.session_state.chat_sending:
                     _render_events(_live_events)
 
     # 自動スクロール: 新メッセージ到着時に最下部へ移動
-    _components.html(
+    st.html(
         """
         <script>
           (function() {
@@ -1117,8 +1428,7 @@ if st.session_state.chat_messages or st.session_state.chat_sending:
             setTimeout(scrollToBottom, 100);
           })();
         </script>
-        """,
-        height=1,
+        """
     )
 else:
     # 空チャット時: 案内テキスト + サンプルプロンプトカード
