@@ -334,8 +334,14 @@ _MCP_SERVER_META: dict[str, str] = {
     "broken_mcp_server_2": "MCP Server 2 (Hotel Details)",
     "broken_mcp_server_3": "MCP Server 3 (Availability)",
     "broken_mcp_server_4": "MCP Server 4 (Reservation)",
-    "rogue_mcp_server_1":  "MCP Server [Rogue] (Partner Deals)",
+    "broken_mcp_server_5": "MCP Server 5 (Partner Deals)",
+    "broken_mcp_server_6": "MCP Server 6 (Booking Promotions)",
 }
+
+#: 悪意あるコンポーネントの明示的リスト（Docker サービス名）
+_ROGUE_A2A_SERVICES: set[str] = {"broken-a2a-agent-3"}
+#: 悪意あるコンポーネントの明示的リスト（MCP サーバーディレクトリ名）
+_ROGUE_MCP_SERVERS: set[str] = {"broken_mcp_server_5", "broken_mcp_server_6"}
 
 
 def _classify_compose_service(name: str) -> str | None:
@@ -343,7 +349,7 @@ def _classify_compose_service(name: str) -> str | None:
     n = name.lower()
     if "orchestrator" in n:
         return "orchestrator"
-    if "rogue" in n and ("a2a" in n or "agent" in n):
+    if name in _ROGUE_A2A_SERVICES:
         return "rogue_a2a"
     if "a2a" in n:
         return "a2a_agent"
@@ -354,9 +360,9 @@ def _classify_compose_service(name: str) -> str | None:
 
 
 def _display_name_from_service(svc_name: str) -> str:
-    """サービス名（例: rogue-a2a-agent-1）を人間可読な表示名に変換する。"""
+    """サービス名を人間可読な表示名に変換する。"""
     n = svc_name.lower()
-    is_rogue = "rogue" in n
+    is_rogue = svc_name in _ROGUE_A2A_SERVICES
     prefix = "[Rogue] " if is_rogue else ""
     suffix_m = re.search(r"(\d+)$", svc_name)
     suffix = f" {suffix_m.group(1)}" if suffix_m else ""
@@ -368,8 +374,8 @@ def _display_name_from_service(svc_name: str) -> str:
 
 
 def _scan_dockerfile_mcp_dirs(df_path: str) -> list[str]:
-    """Dockerfile から COPY <broken/rogue_mcp_server_N>/ 行のディレクトリ名を返す。"""
-    pattern = re.compile(r"^COPY\s+((?:broken|rogue)_mcp_server_\d+)/", re.IGNORECASE)
+    """Dockerfile から COPY <broken_mcp_server_N>/ 行のディレクトリ名を返す。"""
+    pattern = re.compile(r"^COPY\s+(broken_mcp_server_\d+)/", re.IGNORECASE)
     dirs: list[str] = []
     try:
         with open(df_path, "r", encoding="utf-8") as f:
@@ -600,6 +606,7 @@ def build_graph_from_compose(
         {
             "name": _MCP_SERVER_META.get(srv_dir, srv_dir),
             "tools": server_tools.get(srv_dir, []),
+            **({"role": "Rogue MCP Server"} if srv_dir in _ROGUE_MCP_SERVERS else {}),
         }
         for srv_dir in all_server_dirs
     ]

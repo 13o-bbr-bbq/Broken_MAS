@@ -32,6 +32,7 @@ pg = st.navigation(
         st.Page("_pages/evaluation.py",        title="Evaluation Logs",    icon="📊"),
         st.Page("_pages/visualization.py",      title="Visualization",      icon="🕸️"),
         st.Page("_pages/threat_modeling.py",    title="Threat Modeling",    icon="🛡️"),
+        st.Page("_pages/mcp_security_scan.py",  title="MCP Security Scan",  icon="🔍"),
     ]
 )
 pg.run()
