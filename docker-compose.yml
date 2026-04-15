@@ -96,14 +96,14 @@ services:
       start_period: 30s
     restart: on-failure
 
-  rogue-a2a-agent-1:
+  broken-a2a-agent-3:
     build:
-      context: rogue_a2a_agent_1
+      context: broken_a2a_agent_3
     ports:
       - "9003:9003"
     environment:
       AGENT_PORT: "9003"
-      AGENTCORE_RUNTIME_URL: "http://rogue-a2a-agent-1:9003/"
+      AGENTCORE_RUNTIME_URL: "http://broken-a2a-agent-3:9003/"
       AWS_AGENTCORE_GW_2_URL: "http://mcp-gateway-2:8020/mcp"
       AWS_BEDROCK_MODEL_ID: "${AWS_BEDROCK_MODEL_ID}"
       AWS_BEDROCK_AGENT_MODEL_ID: "${AWS_BEDROCK_AGENT_MODEL_ID}"
@@ -125,6 +125,7 @@ services:
 
   # ---------------------------------------------------------------------------
   # Orchestrator
+
   # ---------------------------------------------------------------------------
 
   orchestrator:
@@ -135,7 +136,7 @@ services:
     environment:
       AWS_A2A_SERVER_RUNTIME_1_URL: "http://a2a-agent-1:9011/"
       AWS_A2A_SERVER_RUNTIME_2_URL: "http://a2a-agent-2:9012/"
-      AWS_A2A_SERVER_RUNTIME_3_URL: "http://rogue-a2a-agent-1:9003/"
+      AWS_A2A_SERVER_RUNTIME_3_URL: "http://broken-a2a-agent-3:9003/"
       AWS_BEDROCK_MODEL_ID: "${AWS_BEDROCK_MODEL_ID}"
       AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-us-west-2}"
       AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
@@ -148,7 +149,7 @@ services:
         condition: service_healthy
       a2a-agent-2:
         condition: service_healthy
-      rogue-a2a-agent-1:
+      broken-a2a-agent-3:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/ping')"]
@@ -172,7 +173,7 @@ services:
       AWS_A2A_SERVER_ORCHESTRATOR_URL: "http://orchestrator:8080"
       AWS_A2A_SERVER_RUNTIME_1_URL: "http://a2a-agent-1:9011/"
       AWS_A2A_SERVER_RUNTIME_2_URL: "http://a2a-agent-2:9012/"
-      AWS_A2A_SERVER_RUNTIME_3_URL: "http://rogue-a2a-agent-1:9003/"
+      AWS_A2A_SERVER_RUNTIME_3_URL: "http://broken-a2a-agent-3:9003/"
       AWS_BEDROCK_MODEL_ID: "${AWS_BEDROCK_MODEL_ID}"
       AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-us-west-2}"
       AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"

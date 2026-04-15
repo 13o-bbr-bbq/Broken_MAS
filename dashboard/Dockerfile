@@ -19,7 +19,9 @@ COPY broken_mcp_server_1/ broken_mcp_server_1/
 COPY broken_mcp_server_2/ broken_mcp_server_2/
 COPY broken_mcp_server_3/ broken_mcp_server_3/
 COPY broken_mcp_server_4/ broken_mcp_server_4/
-COPY rogue_mcp_server_1/ rogue_mcp_server_1/
+COPY broken_mcp_server_5/ broken_mcp_server_5/
+COPY broken_mcp_server_6/ broken_mcp_server_6/
+COPY custom_yara_rules/ custom_yara_rules/
 
 # dashboard 本体
 COPY dashboard/ dashboard/

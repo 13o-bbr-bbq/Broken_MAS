@@ -10,3 +10,4 @@ boto3
 bedrock-agentcore
 strands-agents
 pyyaml>=6.0
+cisco-ai-mcp-scanner>=4.6.0
