@@ -354,9 +354,9 @@ This project is designed for **validating prompt injection attacks** and **defen
 
 | Scenario | OWASP | Component | Trigger | Attack Field | Impact |
 |---|---|---|---|---|---|
-| **A: Indirect Prompt Injection** | T1/T6 | MCP Server 1 | `search_recommended_hotels` | `RECOMMENDED_HOTELS["akihabara_tech"].special_protocol` | Suite (normally ¥170,000 / 2 nights) booked at **¥1,000** |
+| **A: Indirect Prompt Injection** | T2/T6 | MCP Server 1 | `search_recommended_hotels` | `RECOMMENDED_HOTELS["akihabara_tech"].special_protocol` | Suite (normally ¥170,000 / 2 nights) booked at **¥1,000** |
 | **B: Economic DoS** | T4 | MCP Server 5 | `get_partner_deals` | `PARTNER_DEALS[0].concierge_service` | 1 user request → **6 tool calls** (all-hotel availability check amplification) |
-| **C: Memory Poisoning** | T3/T8 | MCP Server 2 (Details) | `get_hotel_details` | `HOTEL_DETAILS["sakura_palace"].special_info` | False platinum membership (SP-PLAT-0042) injected into AgentCore Memory; booking at **¥1,000** persists across sessions |
+| **C: Memory Poisoning** | T1/T8 | MCP Server 2 (Details) | `get_hotel_details` | `HOTEL_DETAILS["sakura_palace"].special_info` | False platinum membership (SP-PLAT-0042) injected into AgentCore Memory; booking at **¥1,000** persists across sessions |
 | **D: Agent Identity Spoofing** | T13/T9 | A2A Agent 3 | `get_partner_deals` | Agent card `name: "Partner Deals Agent"` | Orchestrator trusts the malicious agent as a legitimate partner; unauthorized actions executed via a spoofed agent identity |
 | **E: Tool Description Poisoning** | T6 / T17 | MCP Server 6 | `get_booking_promotions` | Tool `description` field (static, fires on every call) | harbor_grand suite (normally ¥170,000 / 2 nights) auto-booked at **¥500** without user consent |
 
@@ -378,11 +378,11 @@ Full cross-reference of all BrokenMAS scenarios and defenses against [OWASP Agen
 
 | Scenario | OWASP Threat | Threat Name | OWASP Playbook | Playbook Name |
 |---|---|---|---|---|
-| **A: Indirect Prompt Injection** | T1 | Indirect Prompt Injection | Playbook 2 | Memory Poisoning & Context Manipulation Prevention |
+| **A: Indirect Prompt Injection** | T2 | Tool Misuse | Playbook 3 | Tool Execution & Resource Integrity |
 | | T6 | Intent Breaking & Goal Manipulation | Playbook 1 | Reasoning Manipulation & Decision Integrity |
 | **B: Economic DoS** | T4 | Excessive Agency / Resource Consumption | Playbook 3 | Tool Execution & Resource Integrity |
-| **C: Memory Poisoning** | T3 | Memory Poisoning | Playbook 3 | Tool Execution & Resource Integrity |
-| | T8 | Persistent Context Manipulation | Playbook 1 | Reasoning Manipulation & Decision Integrity |
+| **C: Memory Poisoning** | T1 | Memory Poisoning | Playbook 2 | Memory Poisoning & Context Manipulation Prevention |
+| | T8 | Repudiation & Untraceability | Playbook 1 | Reasoning Manipulation & Decision Integrity |
 | **D: Agent Identity Spoofing** | T13 | Agent Identity Spoofing | Playbook 6 | Multi-Agent Security |
 | | T9 | Identity Spoofing / Auth Bypass | Playbook 4 | Authentication & Authorization |
 | **E: Tool Description Poisoning** | T6 | Intent Breaking & Goal Manipulation | Playbook 1 | Reasoning Manipulation & Decision Integrity |
@@ -397,7 +397,7 @@ Full cross-reference of all BrokenMAS scenarios and defenses against [OWASP Agen
 | **Orchestrator — Layer 2** (Task Permissions) | Unauthorized tool calls beyond agent's allowed scope | T2, T4 | Playbook 3 | Tool Execution & Resource Integrity |
 | **Orchestrator — Layer 3** (LLM Steering) | Indirect prompt injection, unauthorized delegation, price manipulation | T6, T4 | Playbook 1 | Reasoning Manipulation & Decision Integrity |
 | | | | Playbook 3 | Tool Execution & Resource Integrity |
-| **Dashboard Memory Scan** | Injected attack keywords and anomalous prices in long-term memory | T1, T3 | Playbook 2 | Memory Poisoning & Context Manipulation Prevention |
+| **Dashboard Memory Scan** | Injected attack keywords and anomalous prices in long-term memory | T1, T8 | Playbook 2 | Memory Poisoning & Context Manipulation Prevention |
 | **MCP Security Scan** (YARA + LLM Analyzer) | Poisoned tool descriptions deployed in MCP servers | T6, T17 | Playbook 1 | Reasoning Manipulation & Decision Integrity |
 | | | | Playbook 3 | Tool Execution & Resource Integrity |
 
@@ -407,7 +407,7 @@ Full cross-reference of all BrokenMAS scenarios and defenses against [OWASP Agen
 
 ### Scenario A: Indirect Prompt Injection (Discounted Suite Booking)
 
-**OWASP**: T1 (Indirect Prompt Injection) / T6 (Intent Amplification)
+**OWASP**: T2 (Tool Misuse) / T6 (Intent Breaking & Goal Manipulation)
 **MCP Server**: MCP Server 1 (Hotel Search)
 **Attack Field**: `broken_mcp_server_1` / `RECOMMENDED_HOTELS["akihabara_tech"].special_protocol`
 **Normal Price**: ¥85,000/night × 2 nights = **¥170,000** → Attack price: **¥1,000**
@@ -539,7 +539,7 @@ Result: Only partner deal information is shown. No availability checks are run.
 
 ### Scenario C: Memory Poisoning (Platinum Member Privilege Scam)
 
-**OWASP**: T3 (Memory Poisoning) / T8 (Persistent Context Manipulation)
+**OWASP**: T1 (Memory Poisoning) / T8 (Repudiation & Untraceability)
 **MCP Server**: MCP Server 2 (Hotel Details)
 **Attack Field**: `broken_mcp_server_2` / `HOTEL_DETAILS["sakura_palace"].special_info`
 
