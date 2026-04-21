@@ -5,6 +5,7 @@ import re as _re
 import tempfile
 import time
 import logging
+import requests as _requests
 from pathlib import Path
 from strands import Agent
 from strands.telemetry import StrandsTelemetry
@@ -70,6 +71,9 @@ AGENT_TASK_PERMISSIONS: dict[str, list[str]] = {}
 
 #: Layer 2 の判定モード。"keyword"（決定論的）または "llm"（非決定論的）
 LAYER2_MODE: str = "keyword"
+
+#: レートリミット設定（全 A2A エージェントに転送）
+RATE_LIMIT_CONFIG: dict = {"enabled": False, "max_calls": 3}
 
 #: Layer 2 キーワード対応表（フレームとして提供。受講者は変更不要）
 TASK_KEYWORDS: dict[str, list[str]] = {
@@ -687,6 +691,17 @@ async def get_progress(session_id: str):
     return JSONResponse({"events": events})
 
 
+def _forward_rate_limit(config: dict) -> None:
+    """登録済みの全 A2A エージェントにレートリミット設定を転送する。"""
+    urls = [u for u in [a2s_server_1_url, a2s_server_2_url, a2s_server_3_url] if u]
+    for url in urls:
+        endpoint = url.rstrip("/") + "/rate-limit-config"
+        try:
+            _requests.post(endpoint, json=config, timeout=5)
+        except Exception as e:
+            logging.warning("[RateLimitForward] %s -> %s", endpoint, e)
+
+
 @app.post("/security-config")
 async def set_security_config(request: Request):
     """ダッシュボードからセキュリティ設定を受け取ってモジュール変数を上書きする。
@@ -695,10 +710,11 @@ async def set_security_config(request: Request):
       {
         "registry":    {"エージェント名": "URL", ...},
         "permissions": {"エージェント名": ["search", ...], ...},
-        "layer2_mode": "keyword" | "llm"
+        "layer2_mode": "keyword" | "llm",
+        "rate_limit":  {"enabled": bool, "max_calls": int}
       }
     """
-    global TRUSTED_AGENT_REGISTRY, AGENT_TASK_PERMISSIONS, LAYER2_MODE
+    global TRUSTED_AGENT_REGISTRY, AGENT_TASK_PERMISSIONS, LAYER2_MODE, RATE_LIMIT_CONFIG
     payload = await request.json()
     if "registry" in payload:
         TRUSTED_AGENT_REGISTRY = payload["registry"]
@@ -706,15 +722,20 @@ async def set_security_config(request: Request):
         AGENT_TASK_PERMISSIONS = payload["permissions"]
     if "layer2_mode" in payload and payload["layer2_mode"] in ("keyword", "llm"):
         LAYER2_MODE = payload["layer2_mode"]
+    if "rate_limit" in payload:
+        RATE_LIMIT_CONFIG = payload["rate_limit"]
+        _forward_rate_limit(RATE_LIMIT_CONFIG)
     logging.info(
-        "[SecurityConfig] registry=%d agents, layer2_mode=%s",
+        "[SecurityConfig] registry=%d agents, layer2_mode=%s, rate_limit=%s",
         len(TRUSTED_AGENT_REGISTRY),
         LAYER2_MODE,
+        RATE_LIMIT_CONFIG,
     )
     return JSONResponse({
         "status": "ok",
         "registered_agents": len(TRUSTED_AGENT_REGISTRY),
         "layer2_mode": LAYER2_MODE,
+        "rate_limit": RATE_LIMIT_CONFIG,
     })
 
 
@@ -725,6 +746,7 @@ def get_security_status():
         "registry":    TRUSTED_AGENT_REGISTRY,
         "permissions": AGENT_TASK_PERMISSIONS,
         "layer2_mode": LAYER2_MODE,
+        "rate_limit":  RATE_LIMIT_CONFIG,
     })
 
 

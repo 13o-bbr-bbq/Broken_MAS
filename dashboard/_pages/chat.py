@@ -802,6 +802,10 @@ if "security_permissions" not in st.session_state:
     st.session_state.security_permissions = {}
 if "security_layer2_mode" not in st.session_state:
     st.session_state.security_layer2_mode = "keyword"
+if "rate_limit_enabled" not in st.session_state:
+    st.session_state.rate_limit_enabled = False
+if "rate_limit_max_calls" not in st.session_state:
+    st.session_state.rate_limit_max_calls = 3
 
 # ---------------------------------------------------------------------------
 # バックグラウンドスレッドの完了チェック（スクリプト先頭）
@@ -945,10 +949,11 @@ with st.sidebar:
     st.subheader(T["chat_section_security"],
                  help=T["chat_help_steering_section"])
 
-    _tab_steering, _tab_registry, _tab_permissions = st.tabs([
+    _tab_steering, _tab_registry, _tab_permissions, _tab_rate_limit = st.tabs([
         T["chat_tab_llm_steering"],
         T["chat_tab_agent_registry"],
         T["chat_tab_task_permissions"],
+        T["chat_tab_rate_limit"],
     ])
 
     # ----------------------------------------------------------------
@@ -1147,6 +1152,47 @@ with st.sidebar:
                 st.success(T["chat_success_security_applied"])
             except Exception as _e:
                 st.error(T["chat_error_security_apply"].format(error=str(_e)))
+
+    # ----------------------------------------------------------------
+    # Tab 4: レートリミット
+    # ----------------------------------------------------------------
+    with _tab_rate_limit:
+        st.session_state.rate_limit_enabled = st.toggle(
+            T["chat_label_rate_limit_enabled"],
+            value=st.session_state.rate_limit_enabled,
+            key="toggle_rate_limit",
+        )
+
+        st.session_state.rate_limit_max_calls = st.slider(
+            T["chat_label_rate_limit_max_calls"],
+            min_value=1,
+            max_value=10,
+            value=st.session_state.rate_limit_max_calls,
+            step=1,
+            help=T["chat_help_rate_limit_max_calls"],
+            key="slider_rate_limit_max_calls",
+            disabled=not st.session_state.rate_limit_enabled,
+        )
+
+        st.divider()
+
+        if st.button(T["chat_btn_rate_limit_apply"], use_container_width=True,
+                     type="primary", key="btn_rate_limit_apply"):
+            try:
+                _resp = requests.post(
+                    orchestrator_url.rstrip("/") + "/security-config",
+                    json={
+                        "rate_limit": {
+                            "enabled":   st.session_state.rate_limit_enabled,
+                            "max_calls": st.session_state.rate_limit_max_calls,
+                        }
+                    },
+                    timeout=10,
+                )
+                _resp.raise_for_status()
+                st.success(T["chat_success_rate_limit_applied"])
+            except Exception as _e:
+                st.error(T["chat_error_rate_limit_apply"].format(error=str(_e)))
 
     st.divider()
 

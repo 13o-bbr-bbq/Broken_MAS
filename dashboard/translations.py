@@ -69,6 +69,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "chat_tab_llm_steering":           "LLM Steering",
         "chat_tab_agent_registry":         "エージェント認証",
         "chat_tab_task_permissions":        "タスク権限",
+        "chat_tab_rate_limit":             "レートリミット",
         # registry tab
         "chat_label_agent_name":           "エージェント名",
         "chat_label_agent_url":            "URL",
@@ -83,6 +84,13 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "chat_label_layer2_keyword":       "キーワードマッチ（高速・決定論的）",
         "chat_label_layer2_llm":           "LLM 分類（高精度・非決定論的）",
         "chat_info_permissions_no_agents": "エージェント認証タブでエージェントを登録してください",
+        # rate limit tab
+        "chat_label_rate_limit_enabled":   "レートリミットを有効にする",
+        "chat_label_rate_limit_max_calls": "タスク内の最大ツール呼び出し回数",
+        "chat_help_rate_limit_max_calls":  "1つの A2A タスク内でエージェントが呼び出せるツールの上限。超過した呼び出しはキャンセルされます。",
+        "chat_btn_rate_limit_apply":       "適用",
+        "chat_success_rate_limit_applied": "レートリミット設定をオーケストレーターに送信しました",
+        "chat_error_rate_limit_apply":     "送信失敗: {error}",
         # memory
         "chat_section_memory": "🧠 AgentCore Memory",
         "chat_help_memory_section": (
@@ -336,6 +344,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "chat_tab_llm_steering":           "LLM Steering",
         "chat_tab_agent_registry":         "Agent Registry",
         "chat_tab_task_permissions":        "Task Permissions",
+        "chat_tab_rate_limit":             "Rate Limit",
         # registry tab
         "chat_label_agent_name":           "Agent Name",
         "chat_label_agent_url":            "URL",
@@ -350,6 +359,13 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "chat_label_layer2_keyword":       "Keyword Match (fast, deterministic)",
         "chat_label_layer2_llm":           "LLM Classification (accurate, non-deterministic)",
         "chat_info_permissions_no_agents": "Register agents in the Agent Registry tab first.",
+        # rate limit tab
+        "chat_label_rate_limit_enabled":   "Enable Rate Limit",
+        "chat_label_rate_limit_max_calls": "Max tool calls per task",
+        "chat_help_rate_limit_max_calls":  "Maximum number of tool calls an agent can make within a single A2A task. Calls exceeding the limit are cancelled.",
+        "chat_btn_rate_limit_apply":       "Apply",
+        "chat_success_rate_limit_applied": "Rate limit configuration sent to orchestrator.",
+        "chat_error_rate_limit_apply":     "Failed to send: {error}",
         # memory
         "chat_section_memory": "🧠 AgentCore Memory",
         "chat_help_memory_section": (
