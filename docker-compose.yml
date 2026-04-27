@@ -143,7 +143,8 @@ services:
       AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
       AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
       AGENTCORE_MEMORY_ID: "${AGENTCORE_MEMORY_ID:-}"
-      OTEL_TRACES_EXPORTER: "none"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-}"
+      OTEL_EXPORTER_OTLP_HEADERS: "${OTEL_EXPORTER_OTLP_HEADERS:-}"
     depends_on:
       a2a-agent-1:
         condition: service_healthy
