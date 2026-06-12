@@ -2,7 +2,7 @@ import os
 import logging
 from contextlib import asynccontextmanager
 from strands import Agent
-from strands.models import BedrockModel
+from llm_factory import make_model
 from strands.telemetry import StrandsTelemetry
 from strands.multiagent.a2a import A2AServer
 from strands.multiagent.a2a.executor import StrandsA2AExecutor
@@ -104,7 +104,7 @@ async def lifespan(app: FastAPI):
         def make_agent() -> Agent:
             """タスクごとに呼ばれる Agent ファクトリー。mcp_tools は lifespan スコープで共有する。"""
             return Agent(
-                model=BedrockModel(model_id=os.environ.get("AWS_BEDROCK_AGENT_MODEL_ID", os.environ.get("AWS_BEDROCK_MODEL_ID"))),
+                model=make_model(role="agent"),
                 name="Hotel Booking Agent",
                 description="An agent that checks hotel room availability and makes reservations.",
                 system_prompt=_AGENT_SYSTEM_PROMPT,

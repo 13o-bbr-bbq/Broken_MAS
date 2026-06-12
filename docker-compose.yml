@@ -1,3 +1,18 @@
+# ---------------------------------------------------------------------------
+# LLM プロバイダ切り替え（Bedrock / Ollama）共通定義
+# LLM_PROVIDER=ollama のとき各エージェントは OLLAMA_* を参照する。
+# 既定は bedrock のため未設定でも従来挙動を維持する。
+# ---------------------------------------------------------------------------
+x-llm-env: &llm-env
+  LLM_PROVIDER: "${LLM_PROVIDER:-bedrock}"
+  OLLAMA_HOST: "${OLLAMA_HOST:-http://host.docker.internal:11434}"
+  OLLAMA_MODEL_ID: "${OLLAMA_MODEL_ID:-}"
+  OLLAMA_AGENT_MODEL_ID: "${OLLAMA_AGENT_MODEL_ID:-}"
+
+# コンテナからホスト上の Ollama（localhost:11434）へ到達するための定義。
+x-ollama-hosts: &ollama-hosts
+  - "host.docker.internal:host-gateway"
+
 services:
 
   # ---------------------------------------------------------------------------
@@ -45,9 +60,11 @@ services:
   a2a-agent-1:
     build:
       context: broken_a2a_agent_1
+    extra_hosts: *ollama-hosts
     ports:
       - "9011:9011"
     environment:
+      <<: *llm-env
       AGENT_PORT: "9011"
       AGENTCORE_RUNTIME_URL: "http://a2a-agent-1:9011/"
       AWS_AGENTCORE_GW_1_URL: "http://mcp-gateway-1:8010/mcp"
@@ -72,9 +89,11 @@ services:
   a2a-agent-2:
     build:
       context: broken_a2a_agent_2
+    extra_hosts: *ollama-hosts
     ports:
       - "9012:9012"
     environment:
+      <<: *llm-env
       AGENT_PORT: "9012"
       AGENTCORE_RUNTIME_URL: "http://a2a-agent-2:9012/"
       AWS_AGENTCORE_GW_2_URL: "http://mcp-gateway-2:8020/mcp"
@@ -99,9 +118,11 @@ services:
   broken-a2a-agent-3:
     build:
       context: broken_a2a_agent_3
+    extra_hosts: *ollama-hosts
     ports:
       - "9003:9003"
     environment:
+      <<: *llm-env
       AGENT_PORT: "9003"
       AGENTCORE_RUNTIME_URL: "http://broken-a2a-agent-3:9003/"
       AWS_AGENTCORE_GW_2_URL: "http://mcp-gateway-2:8020/mcp"
@@ -131,9 +152,11 @@ services:
   orchestrator:
     build:
       context: broken_a2a_orchestrator_1
+    extra_hosts: *ollama-hosts
     ports:
       - "8080:8080"
     environment:
+      <<: *llm-env
       AWS_A2A_SERVER_RUNTIME_1_URL: "http://a2a-agent-1:9011/"
       AWS_A2A_SERVER_RUNTIME_2_URL: "http://a2a-agent-2:9012/"
       AWS_A2A_SERVER_RUNTIME_3_URL: "http://broken-a2a-agent-3:9003/"
@@ -168,9 +191,11 @@ services:
     build:
       context: .
       dockerfile: dashboard/Dockerfile
+    extra_hosts: *ollama-hosts
     expose:
       - "8501"
     environment:
+      <<: *llm-env
       AWS_A2A_SERVER_ORCHESTRATOR_URL: "http://orchestrator:8080"
       AWS_A2A_SERVER_RUNTIME_1_URL: "http://a2a-agent-1:9011/"
       AWS_A2A_SERVER_RUNTIME_2_URL: "http://a2a-agent-2:9012/"

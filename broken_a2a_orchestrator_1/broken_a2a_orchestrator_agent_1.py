@@ -10,7 +10,7 @@ from pathlib import Path
 from strands import Agent
 from strands.telemetry import StrandsTelemetry
 from strands.experimental.steering import LLMSteeringHandler, Guide
-from strands.models import BedrockModel
+from llm_factory import make_model
 from strands_tools.a2a_client import A2AClientToolProvider
 from fastapi import BackgroundTasks, FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -182,28 +182,36 @@ class SecureSteeringHandler(LoggingSteeringHandler):
         返値は "search" / "details" / "reviews" / "availability" / "reservation" / "unknown"
         のいずれか。
         """
-        import boto3
         import asyncio
+        from strands import Agent
+        from llm_factory import make_model
 
         def _invoke() -> str:
-            client = boto3.client(
-                "bedrock-runtime",
-                region_name=os.environ.get("AWS_DEFAULT_REGION", "us-west-2"),
-            )
-            model_id = os.environ.get("AWS_BEDROCK_MODEL_ID", "")
             prompt = (
                 "以下のメッセージが意図するタスク種別を1つだけ返してください。\n"
                 "選択肢: search / details / reviews / availability / reservation / unknown\n"
                 f"メッセージ: {message_text}\n"
                 "タスク種別のみを1単語で返してください。"
             )
-            resp = client.converse(
-                modelId=model_id,
-                messages=[{"role": "user", "content": [{"text": prompt}]}],
+            # プロバイダ非依存（Bedrock / Ollama）。steering ロールの高精度モデルを使う。
+            classifier = Agent(
+                model=make_model(role="steering"),
+                system_prompt="あなたはタスク分類器です。指定された選択肢から1単語のみを返します。",
+                callback_handler=None,
             )
-            raw = resp["output"]["message"]["content"][0]["text"].strip().lower()
+            result = classifier(prompt)
+            # AgentResult.message は {"role":..,"content":[{"text":..}]} 形式。
+            raw = ""
+            for block in (result.message or {}).get("content", []):
+                if isinstance(block, dict) and "text" in block:
+                    raw += block["text"]
+            raw = raw.strip().lower()
             valid = {"search", "details", "reviews", "availability", "reservation"}
-            return raw if raw in valid else "unknown"
+            # LLM が余計な語を含めても拾えるよう含有判定する。
+            for v in valid:
+                if v in raw:
+                    return v
+            return "unknown"
 
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, _invoke)
@@ -584,7 +592,7 @@ async def invoke_agent(request: Request, background_tasks: BackgroundTasks):
     # LedgerProvider の steering_context もセッション間で独立する。
     session_steering_handler = SecureSteeringHandler(
         session_id=session_id,
-        model=BedrockModel(model_id=os.environ.get("AWS_BEDROCK_MODEL_ID")),
+        model=make_model(role="steering"),
         system_prompt=steering_prompt,
     )
 
@@ -607,7 +615,7 @@ async def invoke_agent(request: Request, background_tasks: BackgroundTasks):
             region_name=os.environ.get("AWS_DEFAULT_REGION", "us-west-2"),
         )
         orchestrator = Agent(
-            model=BedrockModel(model_id=os.environ.get("AWS_BEDROCK_MODEL_ID")),
+            model=make_model(role="orchestrator"),
             name="Orchestrator Agent",
             description="リモートのA2Aエージェントと連携するオーケストレーター",
             system_prompt=ORCHESTRATOR_SYSTEM_PROMPT,
@@ -641,7 +649,7 @@ async def invoke_agent(request: Request, background_tasks: BackgroundTasks):
             meta["last_used"] = time.time()
         else:
             orchestrator = Agent(
-                model=BedrockModel(model_id=os.environ.get("AWS_BEDROCK_MODEL_ID")),
+                model=make_model(role="orchestrator"),
                 name="Orchestrator Agent",
                 description="リモートのA2Aエージェントと連携するオーケストレーター",
                 system_prompt=ORCHESTRATOR_SYSTEM_PROMPT,

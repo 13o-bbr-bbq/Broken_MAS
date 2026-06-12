@@ -249,7 +249,7 @@ def _run_thread(
     logger.info("_run_thread 開始: session_id=%s output_format=%s", session_id, output_format)
     try:
         from strands import Agent
-        from strands.models import BedrockModel
+        from llm_factory import make_model
 
         # 知識ベースをモジュール変数に反映
         kb = tma.load_knowledge_base(tma._DEFAULT_KB_PATH)
@@ -266,7 +266,7 @@ def _run_thread(
 
         # オーケストレーターを起動
         orchestrator = Agent(
-            model=BedrockModel(model_id=os.environ.get("AWS_BEDROCK_MODEL_ID")),
+            model=make_model(role="orchestrator"),
             system_prompt=system_prompt,
             tools=[tma.run_phase, tma.record_phase_finding, tma.generate_threat_report],
         )
@@ -499,7 +499,9 @@ else:  # idle
 
     st.divider()
 
-    if not os.environ.get("AWS_BEDROCK_MODEL_ID"):
+    _llm_provider = os.environ.get("LLM_PROVIDER", "bedrock").strip().lower()
+    _required_model_env = "OLLAMA_MODEL_ID" if _llm_provider == "ollama" else "AWS_BEDROCK_MODEL_ID"
+    if not os.environ.get(_required_model_env):
         st.error(T["tm_error_no_model_id"])
         st.stop()
 

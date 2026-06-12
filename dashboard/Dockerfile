@@ -10,6 +10,9 @@ COPY evaluation_client/ evaluation_client/
 COPY threat_modeling_agent/ threat_modeling_agent/
 COPY visualization/ visualization/
 
+# LLM プロバイダ切り替えファクトリ（threat_modeling_agent / dashboard が import）
+COPY llm_factory.py llm_factory.py
+
 # Docker Compose ローカルトポロジー生成に必要なファイル群
 # （build_graph_from_compose が /app 配下を参照する）
 COPY docker-compose.yml docker-compose.yml

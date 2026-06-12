@@ -126,19 +126,33 @@ GET  /security-status   # 現在の設定を取得（ダッシュボード表示
 - `BeforeToolCallEvent` で `steer_before_tool()` が呼ばれる（`a2a_send_message` 含む全ツール）
 - `Proceed` → ツール実行、`Guide` → キャンセルしてオーケストレーターにフィードバック
 
-### BedrockModel の明示指定
-`Agent(model=None)` の場合 `BedrockModel()` が使用されデフォルトモデルが適用される。
-リージョン変更への対応と自動変換バグ防止のため、必ず `BedrockModel` を明示的に生成すること。
+### LLM プロバイダ切り替え（`make_model` ファクトリ）
+
+モデル生成は `llm_factory.py` の `make_model(role=...)` に集約されている。各エージェントは
+`BedrockModel` を直接生成せず、必ずこのファクトリ経由でモデルを取得する。これにより
+**コード改修なしに `.env` の `LLM_PROVIDER` だけで Bedrock / Ollama を切り替えられる**。
 
 ```python
-# NG: 文字列渡し（内部で自動変換される）
-Agent(model="anthropic.claude-sonnet-4-20250514-v1:0", ...)
+from llm_factory import make_model
 
-# OK: BedrockModel を明示生成
-Agent(model=BedrockModel(model_id=os.environ.get("AWS_BEDROCK_MODEL_ID")), ...)
+# role でモデルの「格」を選ぶ（既存の 2 モデル構成を踏襲）:
+#   "orchestrator" / "steering" → 高精度モデル（守る側）
+#   "agent"                     → 軽量モデル（攻撃を受ける側）
+Agent(model=make_model(role="orchestrator"), ...)
 ```
 
-リージョン変更時は `BedrockModel(model_id="...", region_name="ap-northeast-1")` で対応。
+- `LLM_PROVIDER=bedrock`（既定）: `AWS_BEDROCK_MODEL_ID` / `AWS_BEDROCK_AGENT_MODEL_ID` を参照し
+  `BedrockModel` を生成（従来挙動を完全維持）。
+- `LLM_PROVIDER=ollama`: `OLLAMA_HOST` / `OLLAMA_MODEL_ID` / `OLLAMA_AGENT_MODEL_ID` を参照し
+  `OllamaModel` を生成。ツール呼び出し対応モデル（`llama3.1` / `qwen2.5` 等）が必須。
+- **ファクトリは各ビルドコンテキストに複製**: docker-compose のビルドコンテキストがディレクトリ
+  単位のため、`llm_factory.py` を `broken_a2a_agent_1/2/3` / `broken_a2a_orchestrator_1` /
+  ルート（dashboard・threat_modeling_agent 用）に同一内容で配置している（意図的な複製）。
+- Steering の Layer 2 LLM 分類（`_classify_task_llm`）も `make_model` 経由でプロバイダ非依存。
+- **AWS 固有機能は対象外**: Bedrock Guardrail と AgentCore Memory は AWS 専用機能であり、
+  Ollama モードでは単に未使用になる（対話 LLM の切り替えとは独立）。
+- リージョン変更時は `BedrockModel(model_id="...", region_name="ap-northeast-1")` 相当の指定が
+  必要になるため、その場合は `llm_factory.py` を編集する。
 
 ### OTEL テレメトリ（Strands Agents）
 `StrandsTelemetry().setup_otlp_exporter()` を起動時に明示的に呼ぶ必要がある。

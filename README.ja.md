@@ -12,6 +12,7 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-latest-005571)
 ![Streamlit](https://img.shields.io/badge/Streamlit-1.35%2B-%23FF4B4B)
 ![AWS Bedrock](https://img.shields.io/badge/AWS_Bedrock-%23FF9900)
+![Ollama](https://img.shields.io/badge/Ollama-local_LLM-%23000000)
 
 <img src="./assets/images/broken_mas_logo.png" width="70%">
 
@@ -125,8 +126,9 @@ MCP Svr 1  MCP Svr 2  MCP Svr 3  MCP Svr 4  MCP Svr 5            MCP Svr 6
 | オブザーバビリティ | Strands Agents OTEL → [Langfuse](https://langfuse.com/) |
 | ダッシュボード | [Streamlit](https://streamlit.io/) + [Plotly](https://plotly.com/) |
 | グラフ描画 | [pyvis](https://pyvis.readthedocs.io/) + [NetworkX](https://networkx.org/) |
-| LLM（Orchestrator / Steering ジャッジ） | Amazon Bedrock（`AWS_BEDROCK_MODEL_ID`） — 高精度モデル、防御側 |
-| LLM（A2A Agent 1/2） | Amazon Bedrock（`AWS_BEDROCK_AGENT_MODEL_ID`） — 軽量モデル、攻撃対象側 |
+| LLM プロバイダ | **`LLM_PROVIDER` で切り替え可能** — Amazon Bedrock（既定）またはローカルの [Ollama](https://ollama.com/)。コード改修不要 |
+| LLM（Orchestrator / Steering ジャッジ） | 高精度モデル、防御側 — `AWS_BEDROCK_MODEL_ID`（Bedrock）/ `OLLAMA_MODEL_ID`（Ollama） |
+| LLM（A2A Agent 1/2/3） | 軽量モデル、攻撃対象側 — `AWS_BEDROCK_AGENT_MODEL_ID`（Bedrock）/ `OLLAMA_AGENT_MODEL_ID`（Ollama） |
 | 長期記憶（任意） | [AWS AgentCore Memory](https://docs.aws.amazon.com/bedrock/latest/userguide/agents-agentcore-memory.html) — セッション横断の永続記憶。攻撃 D の標的 |
 
 ---
@@ -136,7 +138,9 @@ MCP Svr 1  MCP Svr 2  MCP Svr 3  MCP Svr 4  MCP Svr 5            MCP Svr 6
 ### 前提条件
 
 - Docker / Docker Compose
-- Bedrock アクセス権を持つ AWS 認証情報
+- LLM プロバイダ（いずれか1つ）:
+  - **Amazon Bedrock**（既定） — Bedrock アクセス権を持つ AWS 認証情報
+  - **Ollama** — ツール呼び出し対応モデル（`llama3.1` / `qwen2.5` 等）が pull 済みの稼働中 [Ollama](https://ollama.com/) サーバー
 
 ### 環境変数の設定
 
@@ -149,7 +153,10 @@ cp .env.example .env
 `.env` の主要変数:
 
 ```bash
-# LLM モデル ID
+# LLM プロバイダ: "bedrock"（既定）または "ollama" — コード改修なしで切り替え
+LLM_PROVIDER=bedrock
+
+# --- Amazon Bedrock（LLM_PROVIDER=bedrock のとき使用）---
 # Orchestrator / Steering ジャッジ:
 AWS_BEDROCK_MODEL_ID=anthropic.claude-3-5-sonnet-20240620-v1:0
 # A2A Agent 1/2/3
@@ -161,6 +168,13 @@ AWS_SECRET_ACCESS_KEY=
 # 一時的なクレデンシャルの場合のみ必要
 AWS_SESSION_TOKEN=
 AWS_DEFAULT_REGION=us-west-2
+
+# --- Ollama（LLM_PROVIDER=ollama のとき使用）---
+# コンテナからは host.docker.internal でホストの Ollama に到達する（docker-compose.yml で設定済み）。
+# ツール呼び出し対応モデル（llama3.1 / qwen2.5 / mistral-nemo 等）を指定。http:// は必須。
+OLLAMA_HOST=http://host.docker.internal:11434
+OLLAMA_MODEL_ID=llama3.1
+OLLAMA_AGENT_MODEL_ID=llama3.1
 
 # AgentCore Memory（任意 — セッション横断記憶を有効化。攻撃 D に必要）
 # 事前に Memory を作成してください。
@@ -180,6 +194,41 @@ LANGFUSE_PUBLIC_KEY=
 LANGFUSE_SECRET_KEY=
 LANGFUSE_BASE_URL=https://us.cloud.langfuse.com
 ```
+
+### Ollama（ローカル LLM）を使う
+
+Bedrock の代わりにローカル LLM で MAS 全体を動かすには、上記の `LLM_PROVIDER=ollama` と `OLLAMA_*` を設定します。切り替えは**設定のみ**で、Orchestrator・Steering・全 Execution Agent が一括で Ollama に切り替わります。モデル生成は `llm_factory.py`（`make_model()`）に集約されているため、コード改修は不要です。
+
+1. ホストで Ollama サーバーを起動し、ツール呼び出し対応モデルを pull する:
+   ```bash
+   ollama pull llama3.1        # または qwen2.5, mistral-nemo, ...
+   ollama list                 # 正確なタグを確認し OLLAMA_MODEL_ID に設定する
+   ```
+2. コンテナから到達できるよう、Ollama を全インターフェースで待ち受けさせる（既定は `127.0.0.1` のみ）:
+   ```bash
+   # 例: systemd サービスなら Environment="OLLAMA_HOST=0.0.0.0" を設定して再起動
+   ```
+3. `.env` を設定:
+   ```bash
+   LLM_PROVIDER=ollama
+   OLLAMA_HOST=http://host.docker.internal:11434
+   OLLAMA_MODEL_ID=llama3.1
+   OLLAMA_AGENT_MODEL_ID=llama3.1
+   ```
+4. 再ビルドして起動（`ollama` クライアントは `strands-agents[ollama]` extra で導入される）:
+   ```bash
+   docker compose up -d --build
+   ```
+
+設定がコンテナに届いているか確認:
+```bash
+docker compose exec orchestrator printenv LLM_PROVIDER OLLAMA_HOST OLLAMA_MODEL_ID
+```
+
+> **注意点**
+> - モデルは**ツール呼び出しに対応している必要がある**（`a2a_send_message` や MCP ツールをツールとして起動するため）。対応モデルは <https://ollama.com/search?c=tools> を参照。
+> - **AWS 固有機能は AWS のまま**: Bedrock Guardrail と AgentCore Memory は AWS サービスであり、Ollama モードでは単に未使用になる（対話 LLM とは独立）。
+> - **小型ローカルモデルは Claude と挙動が異なる**: ツール呼び出しの安定性や攻撃シナリオ A〜E（および Steering 判定）の再現性が変わる可能性がある。CPU 推論では応答に数十秒かかることがある。
 
 ### 起動
 

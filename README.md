@@ -12,6 +12,7 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-latest-005571)
 ![Streamlit](https://img.shields.io/badge/Streamlit-1.35%2B-%23FF4B4B)
 ![AWS Bedrock](https://img.shields.io/badge/AWS_Bedrock-%23FF9900)
+![Ollama](https://img.shields.io/badge/Ollama-local_LLM-%23000000)
 
 <img src="./assets/images/broken_mas_logo.png" width="70%">
 
@@ -127,8 +128,9 @@ Search     Details/   Check      Confirm     Deals            Promotions
 | Observability | Strands Agents OTEL → [Langfuse](https://langfuse.com/) |
 | Dashboard | [Streamlit](https://streamlit.io/) + [Plotly](https://plotly.com/) |
 | Graph Rendering | [pyvis](https://pyvis.readthedocs.io/) + [NetworkX](https://networkx.org/) |
-| LLM (Orchestrator / Steering Judge) | Amazon Bedrock (`AWS_BEDROCK_MODEL_ID`) — high-accuracy model, defender side |
-| LLM (A2A Agent 1/2) | Amazon Bedrock (`AWS_BEDROCK_AGENT_MODEL_ID`) — lightweight model, attack target side |
+| LLM Provider | **Switchable via `LLM_PROVIDER`** — Amazon Bedrock (default) or local [Ollama](https://ollama.com/), with no code change |
+| LLM (Orchestrator / Steering Judge) | High-accuracy model, defender side — `AWS_BEDROCK_MODEL_ID` (Bedrock) / `OLLAMA_MODEL_ID` (Ollama) |
+| LLM (A2A Agent 1/2/3) | Lightweight model, attack target side — `AWS_BEDROCK_AGENT_MODEL_ID` (Bedrock) / `OLLAMA_AGENT_MODEL_ID` (Ollama) |
 | Long-term Memory (optional) | [AWS AgentCore Memory](https://docs.aws.amazon.com/bedrock/latest/userguide/agents-agentcore-memory.html) — cross-session persistent memory; Attack D target |
 
 ---
@@ -138,7 +140,9 @@ Search     Details/   Check      Confirm     Deals            Promotions
 ### Prerequisites
 
 - Docker / Docker Compose
-- AWS credentials with Bedrock access
+- An LLM provider (choose one):
+  - **Amazon Bedrock** (default) — AWS credentials with Bedrock access
+  - **Ollama** — a running [Ollama](https://ollama.com/) server with a tool-capable model (e.g. `llama3.1`, `qwen2.5`)
 
 ### Configure Environment Variables
 
@@ -151,7 +155,10 @@ cp .env.example .env
 Key variables in `.env`:
 
 ```bash
-# LLM model IDs
+# LLM provider: "bedrock" (default) or "ollama" — switch with no code change
+LLM_PROVIDER=bedrock
+
+# --- Amazon Bedrock (used when LLM_PROVIDER=bedrock) ---
 # Orchestrator / Steering Judge: use a high-accuracy model (defender side)
 AWS_BEDROCK_MODEL_ID=anthropic.claude-3-5-sonnet-20240620-v1:0
 # A2A Agent 1/2/3: lightweight model (attack target side)
@@ -163,6 +170,13 @@ AWS_SECRET_ACCESS_KEY=
 # Required only for temporary credentials
 AWS_SESSION_TOKEN=
 AWS_DEFAULT_REGION=us-west-2
+
+# --- Ollama (used when LLM_PROVIDER=ollama) ---
+# Containers reach the host's Ollama via host.docker.internal (configured in docker-compose.yml).
+# Use a tool-capable model (llama3.1 / qwen2.5 / mistral-nemo, ...). The scheme http:// is required.
+OLLAMA_HOST=http://host.docker.internal:11434
+OLLAMA_MODEL_ID=llama3.1
+OLLAMA_AGENT_MODEL_ID=llama3.1
 
 # AgentCore Memory (optional — enables cross-session memory; required for Attack C)
 # Create the Memory resource in the AWS console or via bedrock-agentcore-control beforehand.
@@ -185,6 +199,41 @@ LANGFUSE_PUBLIC_KEY=
 LANGFUSE_SECRET_KEY=
 LANGFUSE_BASE_URL=https://us.cloud.langfuse.com
 ```
+
+### Using Ollama (local LLM)
+
+To run the entire MAS against a local LLM instead of Bedrock, set `LLM_PROVIDER=ollama` and the `OLLAMA_*` variables above. The switch is configuration-only — Orchestrator, Steering, and all Execution Agents move to Ollama together. Model creation is centralized in `llm_factory.py` (`make_model()`), so no code change is needed.
+
+1. Start an Ollama server on the host and pull a tool-capable model:
+   ```bash
+   ollama pull llama3.1        # or qwen2.5, mistral-nemo, ...
+   ollama list                 # confirm the exact tag, then set OLLAMA_MODEL_ID to it
+   ```
+2. Make sure Ollama listens on all interfaces so containers can reach it (default binds to `127.0.0.1` only):
+   ```bash
+   # e.g. for the systemd service: set Environment="OLLAMA_HOST=0.0.0.0" and restart
+   ```
+3. In `.env`, set:
+   ```bash
+   LLM_PROVIDER=ollama
+   OLLAMA_HOST=http://host.docker.internal:11434
+   OLLAMA_MODEL_ID=llama3.1
+   OLLAMA_AGENT_MODEL_ID=llama3.1
+   ```
+4. Rebuild and start (the `ollama` client is pulled in via the `strands-agents[ollama]` extra):
+   ```bash
+   docker compose up -d --build
+   ```
+
+Verify the containers received the setting and that Ollama is reachable from a container:
+```bash
+docker compose exec orchestrator printenv LLM_PROVIDER OLLAMA_HOST OLLAMA_MODEL_ID
+```
+
+> **Notes & caveats**
+> - The model **must support tool calling** (`a2a_send_message` and MCP tools are invoked as tools). Browse tool-capable models at <https://ollama.com/search?c=tools>.
+> - **AWS-only features stay on AWS**: Bedrock Guardrail and AgentCore Memory are AWS services and are simply unused in Ollama mode (they are independent of the chat LLM).
+> - **Small local models behave differently from Claude**: tool-calling reliability and the reproducibility of attack scenarios A–E (and Steering decisions) may change. On CPU-only inference, responses can take tens of seconds.
 
 ### Start
 

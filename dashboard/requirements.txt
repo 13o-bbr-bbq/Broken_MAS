@@ -8,6 +8,6 @@ pyvis>=0.3.2
 requests>=2.31.0
 boto3
 bedrock-agentcore
-strands-agents
+strands-agents[ollama]
 pyyaml>=6.0
 cisco-ai-mcp-scanner>=4.6.0
