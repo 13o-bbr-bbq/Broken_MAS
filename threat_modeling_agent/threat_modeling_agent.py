@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import Any
 
 from strands import Agent, tool
-from strands.models import BedrockModel
+from llm_factory import make_model
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
@@ -494,7 +494,7 @@ def run_phase(phase_num: int, architecture: str, previous_findings: str) -> str:
 
     # フェーズサブエージェントは get_threat_detail のみを持つ（最小権限）
     phase_agent = Agent(
-        model=BedrockModel(model_id=os.environ.get("AWS_BEDROCK_MODEL_ID")),
+        model=make_model(role="orchestrator"),
         system_prompt=phase_prompt,
         tools=[get_threat_detail],
     )
@@ -722,7 +722,7 @@ def run(args: argparse.Namespace) -> None:
     )
 
     orchestrator = Agent(
-        model=BedrockModel(model_id=os.environ.get("AWS_BEDROCK_MODEL_ID")),
+        model=make_model(role="orchestrator"),
         system_prompt=system_prompt,
         tools=[run_phase, record_phase_finding, generate_threat_report],
     )
