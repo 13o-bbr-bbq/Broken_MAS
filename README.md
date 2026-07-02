@@ -231,7 +231,10 @@ docker compose exec orchestrator printenv LLM_PROVIDER OLLAMA_HOST OLLAMA_MODEL_
 ```
 
 > **Notes & caveats**
-> - The model **must support tool calling** (`a2a_send_message` and MCP tools are invoked as tools). Browse tool-capable models at <https://ollama.com/search?c=tools>.
+> - **Model requirements — tool calling AND Japanese are both mandatory.**
+>   - **Tool calling** is a hard requirement: the whole MAS runs on function calls (`a2a_send_message`, MCP tools, and the Steering `steer_before_tool` hook). A model without tool calling will not run the system at all. Browse tool-capable models at <https://ollama.com/search?c=tools>.
+>   - **Japanese comprehension** is effectively required: user requests, system prompts, tool return values, and the injection payloads in attack scenarios A–E are all in Japanese. It matters most on the **defender side** (Orchestrator / Steering Layer 2 task classification and Layer 3 steering reason over Japanese text) — a weak-Japanese model misses attacks (false negatives) and invalidates the security experiment; on the **attack-target side** it drops payloads and fails to follow instructions, so the scenarios stop reproducing.
+>   - This mainly affects **local model selection** (Bedrock's Claude satisfies both). Among tool-capable Ollama models, Japanese quality differs: **`qwen2.5` (strong CJK) is the recommended first choice over `llama3.1`** for this project, since the defender-side Japanese reasoning is what the whole verification depends on.
 > - **AWS-only features stay on AWS**: Bedrock Guardrail and AgentCore Memory are AWS services and are simply unused in Ollama mode (they are independent of the chat LLM).
 > - **Small local models behave differently from Claude**: tool-calling reliability and the reproducibility of attack scenarios A–E (and Steering decisions) may change. On CPU-only inference, responses can take tens of seconds.
 
