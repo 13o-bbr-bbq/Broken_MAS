@@ -211,3 +211,6 @@ venv_broken_mas/
 
 # Dashboard user settings
 dashboard/steering_prompt.txt
+
+# Session status snapshot (local only)
+STATUS.md
