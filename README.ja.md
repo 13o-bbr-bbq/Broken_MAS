@@ -226,7 +226,10 @@ docker compose exec orchestrator printenv LLM_PROVIDER OLLAMA_HOST OLLAMA_MODEL_
 ```
 
 > **注意点**
-> - モデルは**ツール呼び出しに対応している必要がある**（`a2a_send_message` や MCP ツールをツールとして起動するため）。対応モデルは <https://ollama.com/search?c=tools> を参照。
+> - **モデル要件 — ツール呼び出しと日本語対応の両方が必須。**
+>   - **ツール呼び出し**はハード要件: MAS 全体が関数呼び出しの上に成り立っている（`a2a_send_message`・MCP ツール・Steering の `steer_before_tool` フック）。ツール呼び出し非対応のモデルではシステムが**起動すらしない**。対応モデルは <https://ollama.com/search?c=tools> を参照。
+>   - **日本語理解**は実質必須: ユーザー依頼・システムプロンプト・ツール返却値、および攻撃シナリオ A〜E のインジェクションペイロードはすべて日本語。特に効くのは**防御側**（Orchestrator / Steering の Layer 2 タスク分類・Layer 3 ステアリングが日本語テキストを推論する）で、日本語が弱いモデルは攻撃を**見逃し**（False Negative）、セキュリティ検証としての妥当性が崩れる。**攻撃対象側**でもペイロード脱落や指示追従の失敗が起き、シナリオが再現しなくなる。
+>   - これが主に効くのは**ローカルモデル選定時**（Bedrock の Claude は両要件を満たす）。ツール呼び出し対応の Ollama モデルの中でも日本語の質には差があり、本プロジェクトでは防御側の日本語推論が検証の要になるため、**`llama3.1` より日本語（CJK）に強い `qwen2.5` を第一候補として推奨**する。
 > - **AWS 固有機能は AWS のまま**: Bedrock Guardrail と AgentCore Memory は AWS サービスであり、Ollama モードでは単に未使用になる（対話 LLM とは独立）。
 > - **小型ローカルモデルは Claude と挙動が異なる**: ツール呼び出しの安定性や攻撃シナリオ A〜E（および Steering 判定）の再現性が変わる可能性がある。CPU 推論では応答に数十秒かかることがある。
 
