@@ -914,6 +914,75 @@ with st.sidebar:
     st.divider()
 
     # ================================================================
+    # 📡 Langfuse 連携（OTEL 送信の ON/OFF）
+    # ================================================================
+    st.subheader(T["chat_section_langfuse"],
+                 help=T["chat_help_langfuse_section"])
+
+    # 初回のみ Orchestrator の現在状態を取得してトグル初期値に反映する
+    if "langfuse_otel_enabled" not in st.session_state:
+        _lf_enabled = False
+        _lf_endpoint_ok = None
+        if orchestrator_url:
+            try:
+                _r = requests.get(
+                    orchestrator_url.rstrip("/") + "/otel-status", timeout=5
+                )
+                _r.raise_for_status()
+                _js = _r.json()
+                _lf_enabled = bool(_js.get("enabled", False))
+                _lf_endpoint_ok = _js.get("endpoint_configured")
+            except Exception as _e:
+                logger.debug("otel-status 取得失敗: %s", _e)
+        st.session_state.langfuse_otel_enabled = _lf_enabled
+        st.session_state.langfuse_endpoint_configured = _lf_endpoint_ok
+
+    _langfuse_enabled = st.toggle(
+        T["chat_toggle_langfuse"],
+        value=st.session_state.langfuse_otel_enabled,
+        help=T["chat_help_langfuse_toggle"],
+        key="langfuse_toggle",
+    )
+
+    # トグルが変化したときだけ Orchestrator に反映する（POST /otel-config）
+    if _langfuse_enabled != st.session_state.langfuse_otel_enabled:
+        if not orchestrator_url:
+            st.error(T["chat_error_no_url"])
+        else:
+            try:
+                _r = requests.post(
+                    orchestrator_url.rstrip("/") + "/otel-config",
+                    json={"enabled": _langfuse_enabled},
+                    timeout=10,
+                )
+                _r.raise_for_status()
+                _js = _r.json()
+                st.session_state.langfuse_otel_enabled = bool(
+                    _js.get("enabled", _langfuse_enabled)
+                )
+                st.session_state.langfuse_endpoint_configured = _js.get(
+                    "endpoint_configured"
+                )
+                _state = (
+                    T["chat_langfuse_state_on"]
+                    if st.session_state.langfuse_otel_enabled
+                    else T["chat_langfuse_state_off"]
+                )
+                st.success(T["chat_langfuse_applied"].format(state=_state))
+            except Exception as _e:
+                logger.error("otel-config 設定失敗: %s", _e, exc_info=True)
+                st.error(T["chat_langfuse_apply_error"].format(error=str(_e)))
+
+    # ON なのに送信先（endpoint）が未設定なら警告する
+    if (
+        st.session_state.langfuse_otel_enabled
+        and st.session_state.get("langfuse_endpoint_configured") is False
+    ):
+        st.warning(T["chat_langfuse_no_endpoint"])
+
+    st.divider()
+
+    # ================================================================
     # 🛡️ Guardrail
     # ================================================================
     st.subheader(T["chat_section_guardrail"],

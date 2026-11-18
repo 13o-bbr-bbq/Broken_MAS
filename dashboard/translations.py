@@ -36,6 +36,23 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "chat_error_no_url": "オーケストレーター URL を入力してください。",
         "chat_success_connection": "接続に成功しました。",
         # guardrail
+        "chat_section_langfuse": "📡 Langfuse 連携",
+        "chat_help_langfuse_section": (
+            "Orchestrator のトレースを OTEL（OTLP）形式で Langfuse に送信します。"
+            "トグルを OFF にすると、環境変数が設定されていても送信されません。"
+        ),
+        "chat_toggle_langfuse": "Langfuse 連携（OTEL 送信）を有効にする",
+        "chat_help_langfuse_toggle": (
+            "ON にすると Orchestrator のトレースが Langfuse に送信されます。"
+            "送信先・認証は環境変数 OTEL_EXPORTER_OTLP_ENDPOINT / OTEL_EXPORTER_OTLP_HEADERS で設定します。"
+        ),
+        "chat_langfuse_applied": "Langfuse 連携を {state} にしました。",
+        "chat_langfuse_apply_error": "Langfuse 連携の設定に失敗しました: {error}",
+        "chat_langfuse_no_endpoint": (
+            "⚠️ OTEL_EXPORTER_OTLP_ENDPOINT が未設定です。トグルを ON にしても送信先が無いため送信されません。"
+        ),
+        "chat_langfuse_state_on": "ON",
+        "chat_langfuse_state_off": "OFF",
         "chat_section_guardrail": "🛡️ Guardrail",
         "chat_help_guardrail_section": (
             "AWS Bedrock Guardrail によるコンテンツフィルタリング。"
@@ -310,6 +327,24 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "chat_btn_connection_test": "Test Connection",
         "chat_error_no_url": "Please enter the Orchestrator URL.",
         "chat_success_connection": "Connection successful.",
+        # langfuse
+        "chat_section_langfuse": "📡 Langfuse Integration",
+        "chat_help_langfuse_section": (
+            "Send Orchestrator traces to Langfuse in OTEL (OTLP) format. "
+            "When the toggle is OFF, nothing is sent even if the env vars are set."
+        ),
+        "chat_toggle_langfuse": "Enable Langfuse integration (OTEL export)",
+        "chat_help_langfuse_toggle": (
+            "When ON, Orchestrator traces are sent to Langfuse. "
+            "Endpoint and auth are configured via OTEL_EXPORTER_OTLP_ENDPOINT / OTEL_EXPORTER_OTLP_HEADERS env vars."
+        ),
+        "chat_langfuse_applied": "Langfuse integration set to {state}.",
+        "chat_langfuse_apply_error": "Failed to update Langfuse integration: {error}",
+        "chat_langfuse_no_endpoint": (
+            "⚠️ OTEL_EXPORTER_OTLP_ENDPOINT is not set. Even with the toggle ON, nothing is sent (no destination)."
+        ),
+        "chat_langfuse_state_on": "ON",
+        "chat_langfuse_state_off": "OFF",
         # guardrail
         "chat_section_guardrail": "🛡️ Guardrail",
         "chat_help_guardrail_section": (
