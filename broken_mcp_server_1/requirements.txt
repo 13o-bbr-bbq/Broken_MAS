@@ -1,3 +1,2 @@
-fastmcp
-mcp
+mcp<2
 boto3
