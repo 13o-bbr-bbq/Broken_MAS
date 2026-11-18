@@ -482,7 +482,17 @@ def _setup_gated_otlp_exporter() -> None:
     if os.environ.get("OTEL_TRACES_EXPORTER", "").lower() == "none":
         return
 
-    from opentelemetry import trace as _trace_api
+    # 送信先（OTEL_EXPORTER_OTLP_ENDPOINT）が無いままエクスポーターを登録すると、
+    # トグル ON 時に OTLP の既定 http://localhost:4318 へ送信を試み、バッチスレッドが
+    # connection-refused を繰り返しログに出す。送信先が無い場合は登録自体を見送る
+    # （ダッシュボードはトグル ON 時に endpoint 未設定を警告表示する）。
+    if not _OTEL_ENDPOINT_CONFIGURED:
+        logging.warning(
+            "[OTEL] OTEL_EXPORTER_OTLP_ENDPOINT 未設定のため OTLP エクスポーターを登録しません"
+            "（トグルを ON にしても送信先が無いため送信されません）"
+        )
+        return
+
     from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExportResult
     from opentelemetry.sdk.trace.export import SpanExporter
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
@@ -516,8 +526,9 @@ def _setup_gated_otlp_exporter() -> None:
         logging.exception("[OTEL] Failed to configure gated OTLP exporter: %s", _e)
 
 
-_setup_gated_otlp_exporter()
+# basicConfig を先に行う（_setup_gated_otlp_exporter 内の INFO 確認ログを出すため）。
 logging.basicConfig(level=logging.INFO)
+_setup_gated_otlp_exporter()
 app = FastAPI()
 
 a2s_server_1_url = os.environ.get('AWS_A2A_SERVER_RUNTIME_1_URL')

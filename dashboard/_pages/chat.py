@@ -944,8 +944,16 @@ with st.sidebar:
         key="langfuse_toggle",
     )
 
-    # トグルが変化したときだけ Orchestrator に反映する（POST /otel-config）
-    if _langfuse_enabled != st.session_state.langfuse_otel_enabled:
+    # トグルが変化したときだけ Orchestrator に反映する（POST /otel-config）。
+    # ポーリング中は 1〜2 秒ごとに再実行されるため、POST 失敗で
+    # langfuse_otel_enabled を更新できないとトグル値との差分が残り続け、
+    # 毎回 POST とエラー表示を繰り返してしまう。同一値への再試行を防ぐため、
+    # 「最後に試行した値」を記録し、同じ値なら再送しない。
+    if (
+        _langfuse_enabled != st.session_state.langfuse_otel_enabled
+        and _langfuse_enabled != st.session_state.get("_langfuse_attempted")
+    ):
+        st.session_state["_langfuse_attempted"] = _langfuse_enabled
         if not orchestrator_url:
             st.error(T["chat_error_no_url"])
         else:
@@ -972,6 +980,10 @@ with st.sidebar:
             except Exception as _e:
                 logger.error("otel-config 設定失敗: %s", _e, exc_info=True)
                 st.error(T["chat_langfuse_apply_error"].format(error=str(_e)))
+    elif _langfuse_enabled == st.session_state.langfuse_otel_enabled:
+        # トグルが確定値と一致（ユーザーが元に戻した or 反映済み）。
+        # 試行記録をクリアし、次に同じ値へ変更したとき再試行できるようにする。
+        st.session_state["_langfuse_attempted"] = None
 
     # ON なのに送信先（endpoint）が未設定なら警告する
     if (
