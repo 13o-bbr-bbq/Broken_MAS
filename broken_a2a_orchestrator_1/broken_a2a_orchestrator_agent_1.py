@@ -102,6 +102,31 @@ class LoggingSteeringHandler(LLMSteeringHandler):
 
     async def steer_before_tool(self, *, agent, tool_use, **kwargs):
         action = await super().steer_before_tool(agent=agent, tool_use=tool_use, **kwargs)
+
+        # ------------------------------------------------------------------
+        # Interrupt → Guide 変換（HITL 非対応のため）
+        # ------------------------------------------------------------------
+        # LLM ステアリングは proceed / guide / interrupt の3値を返し得る。
+        # interrupt を返すと基底ハンドラが event.interrupt() を呼び、エージェントが
+        # 割り込み状態（_interrupt_state.activated=True）に入る。しかし Orchestrator は
+        # HTTP リクエスト単位で動作し、人間が承認を返す仕組み（HITL）を持たないため、
+        # 割り込みは解消されずターンが未再開のまま終了する。その結果:
+        #   ① 処理が途中で止まり、委任（検索・予約など）が実行されない
+        #   ② 次ターンの文字列プロンプトで _interrupt_state.resume() が TypeError になる
+        # HITL が無い以上 Interrupt は実行不能なので、Guide（cancel_tool によるフィード
+        # バック付きブロック。割り込み状態に入らない）に変換する。
+        if getattr(action, "type", None) == "interrupt":
+            _reason = (
+                action.get("reason", "")
+                if isinstance(action, dict)
+                else getattr(action, "reason", "")
+            )
+            logging.warning(
+                "[Orchestrator Steering] Interrupt を Guide に変換（HITL 非対応）: %s",
+                _reason,
+            )
+            action = Guide(reason=_reason)
+
         if getattr(action, "type", None) == "guide":
             # tool_use は dict または Pydantic モデルのどちらの場合もある
             tool_name = (
@@ -647,6 +672,18 @@ async def invoke_agent(request: Request, background_tasks: BackgroundTasks):
             # ターンごとに新しい callback_handler を設定（進捗ログをリセット）
             orchestrator.callback_handler = _make_callback_handler(session_id)
             meta["last_used"] = time.time()
+            # 多層防御: 前ターンが割り込み状態（_interrupt_state.activated=True）のまま
+            # 終了していた場合、今回の新しいユーザープロンプト（文字列）は割り込み再開では
+            # ないため、resume() に渡ると TypeError になる。新規ターン開始前に残留した
+            # 割り込み状態をクリアする。Interrupt→Guide 変換（steer_before_tool）により
+            # 通常は activated にならないが、将来の別経路に備えた保険として残す。
+            _istate = getattr(orchestrator, "_interrupt_state", None)
+            if _istate is not None and getattr(_istate, "activated", False):
+                logging.warning(
+                    "[Orchestrator] セッション %s: 残留した割り込み状態をクリアします",
+                    session_id,
+                )
+                _istate.deactivate()
         else:
             orchestrator = Agent(
                 model=make_model(role="orchestrator"),
