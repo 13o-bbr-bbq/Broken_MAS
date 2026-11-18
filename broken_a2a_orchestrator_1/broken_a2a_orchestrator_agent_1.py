@@ -650,6 +650,21 @@ async def invoke_agent(request: Request, background_tasks: BackgroundTasks):
             session_manager=session_manager,
         )
 
+        # 多層防御: AgentCoreMemorySessionManager は Agent 構築時に永続セッションから
+        # _interrupt_state を復元する（strands types/session.py: from_dict）。過去ターンが
+        # 割り込み状態（activated=True）のまま永続化されていると、今回の文字列プロンプトが
+        # stream_async 冒頭の _interrupt_state.resume() に渡り TypeError になる。新規ターンは
+        # 割り込み再開ではないため、復元された残留割り込み状態をクリアする。
+        # （Interrupt→Guide 変換により新規発生はしないが、修正前に汚染済みのセッションや
+        #  将来の別経路に備えた保険。インメモリ経路の同等処理と対になる。）
+        _istate = getattr(orchestrator, "_interrupt_state", None)
+        if _istate is not None and getattr(_istate, "activated", False):
+            logging.warning(
+                "[Orchestrator] セッション %s: 復元された残留割り込み状態をクリアします",
+                session_id,
+            )
+            _istate.deactivate()
+
         # orchestrator(prompt) は同期ブロッキング呼び出しのため、スレッドプールで実行する。
         # そのままイベントループで呼ぶと uvicorn のループがブロックされ、
         # /progress ポーリングリクエストが処理できなくなる（進捗が最後に一瞬しか見えない問題）。
