@@ -360,8 +360,15 @@ def _decode_unicode_escapes(s: str) -> str:
     JSON が ensure_ascii=True で二重エスケープされた場合に残る
     \\u30db のような 6 文字列を実際の日本語文字に変換する。
     すでにデコード済みの Unicode 文字はそのまま通す。
+
+    \\ud83d\\ude00 のようなサロゲートペアは個別に chr() 変換すると分解された
+    まま残り、孤立サロゲートになる。Streamlit が UTF-8 エンコードする際に
+    'surrogates not allowed' で落ちるため、UTF-16 を経由してペアを結合し、
+    結合できない孤立サロゲートは置換文字（U+FFFD）に置き換える。
     """
-    return re.sub(r'\\u([0-9a-fA-F]{4})', lambda m: chr(int(m.group(1), 16)), s)
+    decoded = re.sub(r'\\u([0-9a-fA-F]{4})', lambda m: chr(int(m.group(1), 16)), s)
+    # サロゲートペアの結合 + 孤立サロゲートの除去（入力由来の孤立サロゲートも浄化される）
+    return decoded.encode('utf-16', 'surrogatepass').decode('utf-16', 'replace')
 
 
 def _extract_text(raw) -> str:
