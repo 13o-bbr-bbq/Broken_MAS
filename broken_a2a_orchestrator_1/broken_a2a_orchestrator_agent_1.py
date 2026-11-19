@@ -478,9 +478,82 @@ def _make_callback_handler(session_id: str):
 
     return handler
 
-if os.environ.get("OTEL_TRACES_EXPORTER", "").lower() != "none":
-    StrandsTelemetry().setup_otlp_exporter()
+# ---------------------------------------------------------------------------
+# Langfuse / OTEL 連携（ダッシュボードのトグルからランタイム ON/OFF）
+# ---------------------------------------------------------------------------
+# 設計方針:
+#   OTel の TracerProvider に一度追加した SpanProcessor は実行中に安全に外せない。
+#   そこで「エクスポート直前にフラグで送信をゲートする」方式を採る。
+#   BatchSpanProcessor(GatedOTLPExporter(OTLPSpanExporter)) を常駐させ、
+#   _LANGFUSE_OTEL_ENABLED が False の間はスパンを破棄して送信しない。
+#   → トグル OFF 時は env（OTEL_EXPORTER_OTLP_ENDPOINT 等）が設定されていても
+#     Langfuse には一切送信されない。POST /otel-config でホットリロードする。
+#
+# 既定は OFF。ユーザーがダッシュボードで明示的に ON にしたときだけ送信する。
+_LANGFUSE_OTEL_ENABLED: bool = False
+
+# env が未設定だと送信先が無い（トグル ON でも送れない）。UI 警告用に保持する。
+_OTEL_ENDPOINT_CONFIGURED: bool = bool(
+    os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "").strip()
+)
+
+
+def _setup_gated_otlp_exporter() -> None:
+    """ゲート付き OTLP エクスポーターを常駐登録する。
+
+    OTEL_TRACES_EXPORTER=none のときはトレース送信自体を無効化する（従来挙動）。
+    それ以外では常にプロセッサを登録し、実際の送信可否は _LANGFUSE_OTEL_ENABLED で制御する。
+    """
+    if os.environ.get("OTEL_TRACES_EXPORTER", "").lower() == "none":
+        return
+
+    # 送信先（OTEL_EXPORTER_OTLP_ENDPOINT）が無いままエクスポーターを登録すると、
+    # トグル ON 時に OTLP の既定 http://localhost:4318 へ送信を試み、バッチスレッドが
+    # connection-refused を繰り返しログに出す。送信先が無い場合は登録自体を見送る
+    # （ダッシュボードはトグル ON 時に endpoint 未設定を警告表示する）。
+    if not _OTEL_ENDPOINT_CONFIGURED:
+        logging.warning(
+            "[OTEL] OTEL_EXPORTER_OTLP_ENDPOINT 未設定のため OTLP エクスポーターを登録しません"
+            "（トグルを ON にしても送信先が無いため送信されません）"
+        )
+        return
+
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExportResult
+    from opentelemetry.sdk.trace.export import SpanExporter
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+
+    class GatedOTLPExporter(SpanExporter):
+        """_LANGFUSE_OTEL_ENABLED が False の間、スパンを送らず破棄するラッパー。"""
+
+        def __init__(self, inner: SpanExporter) -> None:
+            self._inner = inner
+
+        def export(self, spans):
+            if not _LANGFUSE_OTEL_ENABLED:
+                # 送信せず成功扱い。バッチにたまったスパンもここで破棄される。
+                return SpanExportResult.SUCCESS
+            return self._inner.export(spans)
+
+        def shutdown(self):
+            return self._inner.shutdown()
+
+        def force_flush(self, timeout_millis: int = 30000):
+            return self._inner.force_flush(timeout_millis)
+
+    try:
+        # StrandsTelemetry() が TracerProvider をグローバル設定する。
+        # setup_otlp_exporter() は使わず、ゲート付きエクスポーターを自前で追加する。
+        telemetry = StrandsTelemetry()
+        gated = GatedOTLPExporter(OTLPSpanExporter())
+        telemetry.tracer_provider.add_span_processor(BatchSpanProcessor(gated))
+        logging.info("[OTEL] Gated OTLP exporter registered (enabled=%s)", _LANGFUSE_OTEL_ENABLED)
+    except Exception as _e:  # noqa: BLE001
+        logging.exception("[OTEL] Failed to configure gated OTLP exporter: %s", _e)
+
+
+# basicConfig を先に行う（_setup_gated_otlp_exporter 内の INFO 確認ログを出すため）。
 logging.basicConfig(level=logging.INFO)
+_setup_gated_otlp_exporter()
 app = FastAPI()
 
 a2s_server_1_url = os.environ.get('AWS_A2A_SERVER_RUNTIME_1_URL')
@@ -807,6 +880,40 @@ def get_security_status():
         "permissions": AGENT_TASK_PERMISSIONS,
         "layer2_mode": LAYER2_MODE,
         "rate_limit":  RATE_LIMIT_CONFIG,
+    })
+
+
+@app.post("/otel-config")
+async def set_otel_config(request: Request):
+    """ダッシュボードの Langfuse 連携トグルから OTEL 送信の ON/OFF を切り替える。
+
+    リクエスト JSON: {"enabled": true | false}
+
+    enabled=False の間は、env（OTEL_EXPORTER_OTLP_ENDPOINT 等）が設定されていても
+    スパンは GatedOTLPExporter で破棄され Langfuse には送信されない。
+    """
+    global _LANGFUSE_OTEL_ENABLED
+    payload = await request.json()
+    if "enabled" in payload:
+        _LANGFUSE_OTEL_ENABLED = bool(payload["enabled"])
+    logging.info("[OTEL] Langfuse export enabled=%s", _LANGFUSE_OTEL_ENABLED)
+    return JSONResponse({
+        "status": "ok",
+        "enabled": _LANGFUSE_OTEL_ENABLED,
+        "endpoint_configured": _OTEL_ENDPOINT_CONFIGURED,
+    })
+
+
+@app.get("/otel-status")
+def get_otel_status():
+    """現在の OTEL 送信状態を返す（ダッシュボードのトグル初期表示・警告用）。
+
+    endpoint_configured が False の場合、enabled=True でも送信先が無いため
+    実際には送信されない（ダッシュボード側で警告表示する）。
+    """
+    return JSONResponse({
+        "enabled": _LANGFUSE_OTEL_ENABLED,
+        "endpoint_configured": _OTEL_ENDPOINT_CONFIGURED,
     })
 
 

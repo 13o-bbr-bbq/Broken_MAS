@@ -914,6 +914,87 @@ with st.sidebar:
     st.divider()
 
     # ================================================================
+    # 📡 Langfuse 連携（OTEL 送信の ON/OFF）
+    # ================================================================
+    st.subheader(T["chat_section_langfuse"],
+                 help=T["chat_help_langfuse_section"])
+
+    # 初回のみ Orchestrator の現在状態を取得してトグル初期値に反映する
+    if "langfuse_otel_enabled" not in st.session_state:
+        _lf_enabled = False
+        _lf_endpoint_ok = None
+        if orchestrator_url:
+            try:
+                _r = requests.get(
+                    orchestrator_url.rstrip("/") + "/otel-status", timeout=5
+                )
+                _r.raise_for_status()
+                _js = _r.json()
+                _lf_enabled = bool(_js.get("enabled", False))
+                _lf_endpoint_ok = _js.get("endpoint_configured")
+            except Exception as _e:
+                logger.debug("otel-status 取得失敗: %s", _e)
+        st.session_state.langfuse_otel_enabled = _lf_enabled
+        st.session_state.langfuse_endpoint_configured = _lf_endpoint_ok
+
+    _langfuse_enabled = st.toggle(
+        T["chat_toggle_langfuse"],
+        value=st.session_state.langfuse_otel_enabled,
+        help=T["chat_help_langfuse_toggle"],
+        key="langfuse_toggle",
+    )
+
+    # トグルが変化したときだけ Orchestrator に反映する（POST /otel-config）。
+    # ポーリング中は 1〜2 秒ごとに再実行されるため、POST 失敗で
+    # langfuse_otel_enabled を更新できないとトグル値との差分が残り続け、
+    # 毎回 POST とエラー表示を繰り返してしまう。同一値への再試行を防ぐため、
+    # 「最後に試行した値」を記録し、同じ値なら再送しない。
+    if (
+        _langfuse_enabled != st.session_state.langfuse_otel_enabled
+        and _langfuse_enabled != st.session_state.get("_langfuse_attempted")
+    ):
+        st.session_state["_langfuse_attempted"] = _langfuse_enabled
+        if not orchestrator_url:
+            st.error(T["chat_error_no_url"])
+        else:
+            try:
+                _r = requests.post(
+                    orchestrator_url.rstrip("/") + "/otel-config",
+                    json={"enabled": _langfuse_enabled},
+                    timeout=10,
+                )
+                _r.raise_for_status()
+                _js = _r.json()
+                st.session_state.langfuse_otel_enabled = bool(
+                    _js.get("enabled", _langfuse_enabled)
+                )
+                st.session_state.langfuse_endpoint_configured = _js.get(
+                    "endpoint_configured"
+                )
+                _state = (
+                    T["chat_langfuse_state_on"]
+                    if st.session_state.langfuse_otel_enabled
+                    else T["chat_langfuse_state_off"]
+                )
+                st.success(T["chat_langfuse_applied"].format(state=_state))
+            except Exception as _e:
+                logger.error("otel-config 設定失敗: %s", _e, exc_info=True)
+                st.error(T["chat_langfuse_apply_error"].format(error=str(_e)))
+    elif _langfuse_enabled == st.session_state.langfuse_otel_enabled:
+        # トグルが確定値と一致（ユーザーが元に戻した or 反映済み）。
+        # 試行記録をクリアし、次に同じ値へ変更したとき再試行できるようにする。
+        st.session_state["_langfuse_attempted"] = None
+
+    # ON なのに送信先（endpoint）が未設定なら警告する
+    if (
+        st.session_state.langfuse_otel_enabled
+        and st.session_state.get("langfuse_endpoint_configured") is False
+    ):
+        st.warning(T["chat_langfuse_no_endpoint"])
+
+    st.divider()
+
+    # ================================================================
     # 🛡️ Guardrail
     # ================================================================
     st.subheader(T["chat_section_guardrail"],
