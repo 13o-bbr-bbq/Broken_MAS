@@ -339,7 +339,7 @@ _MCP_SERVER_META: dict[str, str] = {
 }
 
 #: 悪意あるコンポーネントの明示的リスト（Docker サービス名）
-_ROGUE_A2A_SERVICES: set[str] = {"broken-a2a-agent-3"}
+_ROGUE_A2A_SERVICES: set[str] = {"a2a-agent-3"}
 #: 悪意あるコンポーネントの明示的リスト（MCP サーバーディレクトリ名）
 _ROGUE_MCP_SERVERS: set[str] = {"broken_mcp_server_5", "broken_mcp_server_6"}
 
