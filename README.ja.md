@@ -719,7 +719,7 @@ Step 1: ユーザー → Orchestrator
         "パートナー特別プランを教えてください"
 
 Step 2（ブロック）: Orchestrator SecureSteeringHandler — Layer 1 が発火
-  検証: target_agent_url = "http://broken-a2a-agent-3:9003/"
+  検証: target_agent_url = "http://a2a-agent-3:9003/"
         TRUSTED_AGENT_REGISTRY = {
           "Hotel Search Agent":   "http://a2a-agent-1:9011/",
           "Hotel Booking Agent":  "http://a2a-agent-2:9012/",

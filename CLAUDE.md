@@ -557,7 +557,7 @@ docker compose exec orchestrator curl -s -X POST http://localhost:8080/invocatio
   3. エージェント認証（Layer 1）なしでは Orchestrator が URL を検証できず悪意ある Agent を信頼
   4. 悪意ある Agent が `get_partner_deals` → インジェクションペイロード（`concierge_service` 等）を返す
 - **Layer 1 なし（攻撃成功）**: 不正エージェントが信頼済みとして受け入れられ、攻撃ペイロードが後続のアクションに伝播
-- **Layer 1 あり（防御成功）**: `TRUSTED_AGENT_REGISTRY` に未登録の URL（`http://broken-a2a-agent-3:9003/`）への呼び出しを即時ブロック
+- **Layer 1 あり（防御成功）**: `TRUSTED_AGENT_REGISTRY` に未登録の URL（`http://a2a-agent-3:9003/`）への呼び出しを即時ブロック
 - **ダッシュボード設定**: Chat ページ「エージェント認証」タブで Agent 1/2 の URL を登録することで防御を有効化
 
 ### シナリオ E: T6 / T17 — ツール説明文ポイズニング（標準連携プロトコル偽装型）
