@@ -34,6 +34,7 @@ logging.info(f"Runtime URL: {runtime_url}")
 _RATE_LIMIT_ENABLED: bool = False
 _RATE_LIMIT_MAX_CALLS: int = 3
 _RATE_LIMIT_WINDOW_SEC: float = 60.0
+_RATE_LIMIT_MIN_WINDOW_SEC: float = 1.0  # 防御として意味のある最小窓。これ未満は無視する
 
 # プロセス全体で共有するツール呼び出しのタイムスタンプ列（スライディングウィンドウ）。
 # タスク／セッション（contextId）を横断して集計するため、Orchestrator がリクエストを
@@ -168,15 +169,18 @@ async def set_rate_limit_config(request: Request):
     if "window_sec" in payload:
         # window_sec<=0 だと cutoff>=now で全タイムスタンプが毎回窓外削除され実質無効化、
         # inf だと cutoff=-inf で窓外削除が起きず恒久ロック＋直列化失敗になる。
-        # 有限かつ正の値のみ受理する（非数値・NaN・inf は無視）。
+        # 極小値も実質無効化になるため、有限かつ最小窓(_RATE_LIMIT_MIN_WINDOW_SEC)以上のみ受理する。
         try:
             _ws = float(payload["window_sec"])
         except (TypeError, ValueError):
             _ws = None
-        if _ws is not None and math.isfinite(_ws) and _ws > 0:
+        if _ws is not None and math.isfinite(_ws) and _ws >= _RATE_LIMIT_MIN_WINDOW_SEC:
             _RATE_LIMIT_WINDOW_SEC = _ws
         else:
-            logging.warning("[RateLimit] 不正な window_sec=%r を無視（有限の正の値が必要）", payload.get("window_sec"))
+            logging.warning(
+                "[RateLimit] 不正な window_sec=%r を無視（%.0f 秒以上の有限値が必要）",
+                payload.get("window_sec"), _RATE_LIMIT_MIN_WINDOW_SEC,
+            )
     # 設定変更時はウィンドウの集計をリセットする
     with _rate_lock:
         _rate_call_times.clear()
