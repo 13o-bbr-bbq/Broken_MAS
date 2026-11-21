@@ -163,9 +163,19 @@ async def set_rate_limit_config(request: Request):
     if "enabled" in payload:
         _RATE_LIMIT_ENABLED = bool(payload["enabled"])
     if "max_calls" in payload:
-        _RATE_LIMIT_MAX_CALLS = int(payload["max_calls"])
+        _mc = int(payload["max_calls"])
+        if _mc >= 0:
+            _RATE_LIMIT_MAX_CALLS = _mc
+        else:
+            logging.warning("[RateLimit] 不正な max_calls=%s を無視（0以上が必要）", _mc)
     if "window_sec" in payload:
-        _RATE_LIMIT_WINDOW_SEC = float(payload["window_sec"])
+        # window_sec<=0 だと cutoff=now 以上となり全タイムスタンプが毎回窓外削除され、
+        # 有効表示のまま実質無効化される。正の値のみ受理する。
+        _ws = float(payload["window_sec"])
+        if _ws > 0:
+            _RATE_LIMIT_WINDOW_SEC = _ws
+        else:
+            logging.warning("[RateLimit] 不正な window_sec=%s を無視（正の値が必要）", _ws)
     # 設定変更時はウィンドウの集計をリセットする
     with _rate_lock:
         _rate_call_times.clear()
