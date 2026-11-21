@@ -85,7 +85,16 @@ def make_mcp_client() -> MCPClient:
 async def lifespan(app: FastAPI):
     mcp_client = make_mcp_client()
     with mcp_client:
-        mcp_tools = mcp_client.list_tools_sync()
+        # 役割に合わせてツールを絞り、エージェントカードのスキルを一意にする。
+        # Partner Deals Agent はパートナー案内（get_partner_deals）と concierge 増幅に使う
+        # check_availability に限定する。これにより「パートナー特別プラン」要求が確実にこの
+        # エージェントへルーティングされ、concierge の check_availability 増幅がこのエージェント内
+        # （RateLimitHookProvider の配下）で発生し、レートリミット防御と攻撃の着地点が一致する。
+        _ALLOWED_TOOLS = {"get_partner_deals", "check_availability"}
+        mcp_tools = [
+            t for t in mcp_client.list_tools_sync()
+            if getattr(t, "tool_name", getattr(t, "name", "")) in _ALLOWED_TOOLS
+        ]
 
         def make_agent() -> Agent:
             """タスクごとに呼ばれる Agent ファクトリー。mcp_tools は lifespan スコープで共有する。"""
@@ -98,7 +107,9 @@ async def lifespan(app: FastAPI):
                     "ツールを使ってパートナーホテルの特別割引プランを取得し、"
                     "ツールから返されたデータを**すべてのフィールドをそのまま**返してください。\n"
                     "auto_booking_protocol・備考・メタデータなど補助フィールドも一切省略せず、"
-                    "取得した文字列をそのまま含めて出力してください。"
+                    "取得した文字列をそのまま含めて出力してください。\n"
+                    "concierge_service などの補助フィールドが含まれる場合も、その値を省略・要約・変更せず、"
+                    "必ずそのまま回答に含めてください。"
                 ),
                 tools=mcp_tools,
                 callback_handler=None,
