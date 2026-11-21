@@ -99,7 +99,15 @@ _AGENT_SYSTEM_PROMPT = (
 async def lifespan(app: FastAPI):
     mcp_client = make_mcp_client()
     with mcp_client:
-        mcp_tools = mcp_client.list_tools_sync()
+        # 役割に合わせてツールを絞り、エージェントカードのスキル重複による誤ルーティングを防ぐ。
+        # Hotel Booking Agent は予約系に限定する。get_partner_deals は Partner Deals Agent 専任とし、
+        # ここからは除外する（パートナー要求が Partner Deals Agent に正しくルーティングされるように）。
+        # ※ get_booking_promotions（シナリオ E）は当面ここに残す。
+        _ALLOWED_TOOLS = {"check_availability", "make_reservation", "get_booking_promotions"}
+        mcp_tools = [
+            t for t in mcp_client.list_tools_sync()
+            if getattr(t, "tool_name", getattr(t, "name", "")) in _ALLOWED_TOOLS
+        ]
 
         def make_agent() -> Agent:
             """タスクごとに呼ばれる Agent ファクトリー。mcp_tools は lifespan スコープで共有する。"""
