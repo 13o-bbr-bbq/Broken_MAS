@@ -1,5 +1,7 @@
 import os
 import logging
+import time
+import threading
 from contextlib import asynccontextmanager
 from strands import Agent
 from llm_factory import make_model
@@ -30,17 +32,23 @@ logging.info(f"Runtime URL: {runtime_url}")
 
 _RATE_LIMIT_ENABLED: bool = False
 _RATE_LIMIT_MAX_CALLS: int = 3
+_RATE_LIMIT_WINDOW_SEC: float = 60.0
+
+# プロセス全体で共有するツール呼び出しのタイムスタンプ列（スライディングウィンドウ）。
+# タスク／セッション（contextId）を横断して集計するため、Orchestrator がリクエストを
+# 複数タスクに分割しても累積でカウントされ、タスク単位のカウンタリセットでは回避できない。
+_rate_lock = threading.Lock()
+_rate_call_times: list[float] = []
 
 
 class RateLimitHookProvider:
-    """タスクごとのツール呼び出し回数を制限する HookProvider。
+    """プロセス横断＋時間窓でツール呼び出し回数を制限する HookProvider。
 
-    make_agent() ごとに新しいインスタンスを生成することでタスク間のカウンターをリセットする。
-    上限を超えた呼び出しは BeforeToolCallEvent.cancel_tool でキャンセルする。
+    直近 _RATE_LIMIT_WINDOW_SEC 秒間のツール呼び出し総数が _RATE_LIMIT_MAX_CALLS を
+    超えると BeforeToolCallEvent.cancel_tool でキャンセルする。カウンタはモジュール
+    レベル（プロセス全体）で共有するため、タスク／セッションを分割しても回避できない。
+    時間窓で自然回復するため恒久ロックにはならない。
     """
-
-    def __init__(self):
-        self._count = 0
 
     def register_hooks(self, registry, **kwargs):
         registry.add_callback(BeforeToolCallEvent, self._check)
@@ -48,12 +56,18 @@ class RateLimitHookProvider:
     def _check(self, event: BeforeToolCallEvent, **kwargs):
         if not _RATE_LIMIT_ENABLED:
             return
-        self._count += 1
-        if self._count > _RATE_LIMIT_MAX_CALLS:
-            event.cancel_tool = (
-                f"レートリミット超過: このタスク内のツール呼び出し回数が"
-                f"上限（{_RATE_LIMIT_MAX_CALLS}回）を超えました。処理を中断します。"
-            )
+        now = time.monotonic()
+        with _rate_lock:
+            cutoff = now - _RATE_LIMIT_WINDOW_SEC
+            while _rate_call_times and _rate_call_times[0] < cutoff:
+                _rate_call_times.pop(0)
+            if len(_rate_call_times) >= _RATE_LIMIT_MAX_CALLS:
+                event.cancel_tool = (
+                    f"レートリミット超過: 直近 {_RATE_LIMIT_WINDOW_SEC:.0f} 秒間のツール"
+                    f"呼び出しが上限（{_RATE_LIMIT_MAX_CALLS}回）に達しました。処理を中断します。"
+                )
+                return
+            _rate_call_times.append(now)
 
 
 class PerTaskStrandsA2AExecutor(StrandsA2AExecutor):
@@ -136,19 +150,36 @@ app = FastAPI(lifespan=lifespan)
 
 @app.post("/rate-limit-config")
 async def set_rate_limit_config(request: Request):
-    global _RATE_LIMIT_ENABLED, _RATE_LIMIT_MAX_CALLS
+    global _RATE_LIMIT_ENABLED, _RATE_LIMIT_MAX_CALLS, _RATE_LIMIT_WINDOW_SEC
     payload = await request.json()
     if "enabled" in payload:
         _RATE_LIMIT_ENABLED = bool(payload["enabled"])
     if "max_calls" in payload:
         _RATE_LIMIT_MAX_CALLS = int(payload["max_calls"])
-    logging.info("[RateLimit] enabled=%s max_calls=%d", _RATE_LIMIT_ENABLED, _RATE_LIMIT_MAX_CALLS)
-    return JSONResponse({"status": "ok", "enabled": _RATE_LIMIT_ENABLED, "max_calls": _RATE_LIMIT_MAX_CALLS})
+    if "window_sec" in payload:
+        _RATE_LIMIT_WINDOW_SEC = float(payload["window_sec"])
+    # 設定変更時はウィンドウの集計をリセットする
+    with _rate_lock:
+        _rate_call_times.clear()
+    logging.info(
+        "[RateLimit] enabled=%s max_calls=%d window_sec=%.0f",
+        _RATE_LIMIT_ENABLED, _RATE_LIMIT_MAX_CALLS, _RATE_LIMIT_WINDOW_SEC,
+    )
+    return JSONResponse({
+        "status": "ok",
+        "enabled": _RATE_LIMIT_ENABLED,
+        "max_calls": _RATE_LIMIT_MAX_CALLS,
+        "window_sec": _RATE_LIMIT_WINDOW_SEC,
+    })
 
 
 @app.get("/rate-limit-status")
 def get_rate_limit_status():
-    return JSONResponse({"enabled": _RATE_LIMIT_ENABLED, "max_calls": _RATE_LIMIT_MAX_CALLS})
+    return JSONResponse({
+        "enabled": _RATE_LIMIT_ENABLED,
+        "max_calls": _RATE_LIMIT_MAX_CALLS,
+        "window_sec": _RATE_LIMIT_WINDOW_SEC,
+    })
 
 
 @app.get("/ping")
