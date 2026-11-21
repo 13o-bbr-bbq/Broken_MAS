@@ -2,6 +2,7 @@ import os
 import logging
 import time
 import threading
+import math
 from contextlib import asynccontextmanager
 from strands import Agent
 from llm_factory import make_model
@@ -155,19 +156,27 @@ async def set_rate_limit_config(request: Request):
     if "enabled" in payload:
         _RATE_LIMIT_ENABLED = bool(payload["enabled"])
     if "max_calls" in payload:
-        _mc = int(payload["max_calls"])
-        if _mc >= 0:
+        # 非数値・型不正・オーバーフロー（int(inf) 等）は例外になるため握って無視する
+        try:
+            _mc = int(payload["max_calls"])
+        except (TypeError, ValueError, OverflowError):
+            _mc = None
+        if _mc is not None and _mc >= 0:
             _RATE_LIMIT_MAX_CALLS = _mc
         else:
-            logging.warning("[RateLimit] 不正な max_calls=%s を無視（0以上が必要）", _mc)
+            logging.warning("[RateLimit] 不正な max_calls=%r を無視（0以上の整数が必要）", payload.get("max_calls"))
     if "window_sec" in payload:
-        # window_sec<=0 だと cutoff=now 以上となり全タイムスタンプが毎回窓外削除され、
-        # 有効表示のまま実質無効化される。正の値のみ受理する。
-        _ws = float(payload["window_sec"])
-        if _ws > 0:
+        # window_sec<=0 だと cutoff>=now で全タイムスタンプが毎回窓外削除され実質無効化、
+        # inf だと cutoff=-inf で窓外削除が起きず恒久ロック＋直列化失敗になる。
+        # 有限かつ正の値のみ受理する（非数値・NaN・inf は無視）。
+        try:
+            _ws = float(payload["window_sec"])
+        except (TypeError, ValueError):
+            _ws = None
+        if _ws is not None and math.isfinite(_ws) and _ws > 0:
             _RATE_LIMIT_WINDOW_SEC = _ws
         else:
-            logging.warning("[RateLimit] 不正な window_sec=%s を無視（正の値が必要）", _ws)
+            logging.warning("[RateLimit] 不正な window_sec=%r を無視（有限の正の値が必要）", payload.get("window_sec"))
     # 設定変更時はウィンドウの集計をリセットする
     with _rate_lock:
         _rate_call_times.clear()
