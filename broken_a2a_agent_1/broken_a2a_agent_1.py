@@ -1,5 +1,6 @@
 import os
 import logging
+import threading
 from contextlib import asynccontextmanager
 from strands import Agent
 from llm_factory import make_model
@@ -7,7 +8,7 @@ from strands.telemetry import StrandsTelemetry
 from strands.multiagent.a2a import A2AServer
 from strands.multiagent.a2a.executor import StrandsA2AExecutor
 from strands.tools.mcp.mcp_client import MCPClient
-from strands.hooks.events import BeforeToolCallEvent
+from strands.hooks.events import BeforeToolCallEvent, AfterToolCallEvent
 from mcp.client.streamable_http import streamablehttp_client
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
@@ -90,6 +91,31 @@ _AGENT_SYSTEM_PROMPT = (
     "special_protocol などの補助フィールドが含まれる場合も、その値を省略・要約・変更せず、必ずそのまま回答に含めてください。"
 )
 
+# ---------------------------------------------------------------------------
+# MCP 呼び出し回数カウンタ（ダミーAPI課金表示用。実行された呼び出しのみ計上）
+# ---------------------------------------------------------------------------
+_mcp_call_count: int = 0
+_mcp_count_lock = threading.Lock()
+
+
+class MCPCallCounterHookProvider:
+    """実行された MCP ツール呼び出し回数を数える HookProvider。
+
+    AfterToolCallEvent（ツール実行後）で加算するため、レートリミット等でキャンセル
+    された呼び出しは計上されない（＝実際に課金が発生する呼び出しのみを費用に反映）。
+    """
+
+    def register_hooks(self, registry, **kwargs):
+        registry.add_callback(AfterToolCallEvent, self._count)
+
+    def _count(self, event, **kwargs):
+        if getattr(event, "cancel_message", None) or getattr(event, "exception", None):
+            return
+        global _mcp_call_count
+        with _mcp_count_lock:
+            _mcp_call_count += 1
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     mcp_client = make_mcp_client()
@@ -105,7 +131,7 @@ async def lifespan(app: FastAPI):
                 system_prompt=_AGENT_SYSTEM_PROMPT,
                 tools=mcp_tools,
                 callback_handler=None,
-                hooks=[RateLimitHookProvider()],
+                hooks=[RateLimitHookProvider(), MCPCallCounterHookProvider()],
             )
 
         # A2AServer はメタデータ（AgentCard）生成目的で作成する
@@ -143,6 +169,12 @@ async def set_rate_limit_config(request: Request):
 @app.get("/rate-limit-status")
 def get_rate_limit_status():
     return JSONResponse({"enabled": _RATE_LIMIT_ENABLED, "max_calls": _RATE_LIMIT_MAX_CALLS})
+
+
+@app.get("/mcp-call-count")
+def get_mcp_call_count():
+    """このエージェントプロセスの累積 MCP 呼び出し回数（ダミーAPI課金表示用）。"""
+    return JSONResponse({"count": _mcp_call_count})
 
 
 @app.get("/ping")
