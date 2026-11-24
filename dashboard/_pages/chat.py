@@ -652,7 +652,12 @@ def _check_guardrail(
 #   各エージェントの GET /mcp-call-count を invoke 前後でスナップショットし、
 #   差分（今ターンの MCP 呼び出し数）× 単価でダミー費用を算出する。
 # ---------------------------------------------------------------------------
-_DUMMY_API_COST_PER_CALL = float(os.environ.get("DUMMY_API_COST_PER_CALL", "10") or "10")
+try:
+    # 非数値（例 "abc"）でもモジュール読み込みが落ちないよう既定値へフォールバック
+    _DUMMY_API_COST_PER_CALL = float(os.environ.get("DUMMY_API_COST_PER_CALL") or "10")
+except (TypeError, ValueError):
+    logger.warning("DUMMY_API_COST_PER_CALL が不正。既定値 10 を使用します")
+    _DUMMY_API_COST_PER_CALL = 10.0
 _DUMMY_API_COST_UNIT = os.environ.get("DUMMY_API_COST_UNIT", "¥")
 _AGENT_URLS_FOR_COST = [
     _u for _u in (
@@ -669,19 +674,23 @@ def _fmt_cost(v: float) -> str:
     return s or "0"
 
 
-def _fetch_mcp_count_total(agent_urls: list[str]) -> "int | None":
-    """全エージェントの累積 MCP 呼び出し数を合算して返す。全て取得失敗なら None。"""
-    total = 0
-    ok = False
+def _fetch_mcp_counts(agent_urls: list[str]) -> dict:
+    """取得できたエージェントのみ {url: 累積count} を返す。
+
+    合算値ではなくエージェント別に返すのは、invoke 前後でスナップショット
+    できたエージェント集合が食い違った場合に、別プロセスの累積値同士を
+    減算して架空の費用を計上してしまうのを防ぐため（差分は前後ともに
+    取得できたエージェントの共通集合でのみ算出する）。
+    """
+    counts: dict = {}
     for _url in agent_urls:
         try:
             _r = requests.get(_url.rstrip("/") + "/mcp-call-count", timeout=5)
             _r.raise_for_status()
-            total += int(_r.json().get("count", 0))
-            ok = True
+            counts[_url] = int(_r.json().get("count", 0))
         except Exception as _e:
             logger.debug("mcp-call-count 取得失敗 %s: %s", _url, _e)
-    return total if ok else None
+    return counts
 
 
 def _run_invoke(
@@ -708,8 +717,8 @@ def _run_invoke(
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         headers = _make_request_headers(url, body)
 
-        # ダミーAPI課金: invoke 前の MCP 呼び出し累積数をスナップショット
-        _mcp_before = _fetch_mcp_count_total(_AGENT_URLS_FOR_COST)
+        # ダミーAPI課金: invoke 前の MCP 呼び出し累積数をエージェント別にスナップショット
+        _mcp_before = _fetch_mcp_counts(_AGENT_URLS_FOR_COST)
 
         logger.debug("POST %s (body_len=%d)", url, len(body))
         resp = requests.post(
@@ -728,10 +737,12 @@ def _run_invoke(
         result_box["response"] = data.get("result", data)
         result_box["error"] = None
 
-        # ダミーAPI課金: invoke 後の累積数との差分＝今ターンの MCP 呼び出し数
-        _mcp_after = _fetch_mcp_count_total(_AGENT_URLS_FOR_COST)
-        if _mcp_before is not None and _mcp_after is not None:
-            _delta = max(0, _mcp_after - _mcp_before)
+        # ダミーAPI課金: 前後ともに取得できたエージェントの共通集合で per-agent 差分を合算
+        # （別プロセスの累積値同士の減算による架空課金を防ぐ）
+        _mcp_after = _fetch_mcp_counts(_AGENT_URLS_FOR_COST)
+        _common = set(_mcp_before) & set(_mcp_after)
+        if _common:
+            _delta = sum(max(0, _mcp_after[u] - _mcp_before[u]) for u in _common)
             result_box["mcp_calls"] = _delta
             result_box["api_cost"] = _delta * _DUMMY_API_COST_PER_CALL
         else:
