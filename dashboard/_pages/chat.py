@@ -26,6 +26,7 @@ from datetime import datetime
 import html as _html
 import json
 import logging
+import math
 import os
 import re
 import sys
@@ -653,10 +654,14 @@ def _check_guardrail(
 #   差分（今ターンの MCP 呼び出し数）× 単価でダミー費用を算出する。
 # ---------------------------------------------------------------------------
 try:
-    # 非数値（例 "abc"）でもモジュール読み込みが落ちないよう既定値へフォールバック
-    _DUMMY_API_COST_PER_CALL = float(os.environ.get("DUMMY_API_COST_PER_CALL") or "10")
+    # 非数値（"abc"）・非有限（nan/inf）・負数は不正としてモジュール読み込み時に
+    # 落とさず既定値へフォールバックする（nan/inf は費用・累計を壊すため）
+    _v = float(os.environ.get("DUMMY_API_COST_PER_CALL") or "10")
+    if not math.isfinite(_v) or _v < 0:
+        raise ValueError(f"有限かつ非負でない値: {_v}")
+    _DUMMY_API_COST_PER_CALL = _v
 except (TypeError, ValueError):
-    logger.warning("DUMMY_API_COST_PER_CALL が不正。既定値 10 を使用します")
+    logger.warning("DUMMY_API_COST_PER_CALL が不正（有限の非負数が必要）。既定値 10 を使用します")
     _DUMMY_API_COST_PER_CALL = 10.0
 _DUMMY_API_COST_UNIT = os.environ.get("DUMMY_API_COST_UNIT", "¥")
 _AGENT_URLS_FOR_COST = [
