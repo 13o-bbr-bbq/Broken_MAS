@@ -24,6 +24,9 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         # ── chat.py ──────────────────────────────────────────────────── #
         "chat_title": "💬 Broken MAS Chat",
         "chat_caption": "ローカルオーケストレーターとチャットします。`/invocations` を呼び出します。",
+        "chat_api_cost_label": "ダミーAPI課金",
+        "chat_api_cost_calls": "MCP呼び出し {n}回",
+        "chat_api_cost_session_total": "本セッション累計課金",
         # sidebar sections
         "chat_section_connection": "📡 接続設定",
         "chat_label_orchestrator_url": "オーケストレーター URL",
@@ -316,6 +319,9 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         # ── chat.py ──────────────────────────────────────────────────── #
         "chat_title": "💬 Broken MAS Chat",
         "chat_caption": "Chat with the local orchestrator via `/invocations`.",
+        "chat_api_cost_label": "Dummy API cost",
+        "chat_api_cost_calls": "{n} MCP calls",
+        "chat_api_cost_session_total": "Session total cost",
         # sidebar sections
         "chat_section_connection": "📡 Connection",
         "chat_label_orchestrator_url": "Orchestrator URL",

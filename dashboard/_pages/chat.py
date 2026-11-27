@@ -26,6 +26,7 @@ from datetime import datetime
 import html as _html
 import json
 import logging
+import math
 import os
 import re
 import sys
@@ -647,6 +648,56 @@ def _check_guardrail(
     return is_blocked, reason
 
 
+# ---------------------------------------------------------------------------
+# ダミーAPI課金（経済的DoS演習用）
+#   各エージェントの GET /mcp-call-count を invoke 前後でスナップショットし、
+#   差分（今ターンの MCP 呼び出し数）× 単価でダミー費用を算出する。
+# ---------------------------------------------------------------------------
+try:
+    # 非数値（"abc"）・非有限（nan/inf）・負数は不正としてモジュール読み込み時に
+    # 落とさず既定値へフォールバックする（nan/inf は費用・累計を壊すため）
+    _v = float(os.environ.get("DUMMY_API_COST_PER_CALL") or "10")
+    if not math.isfinite(_v) or _v < 0:
+        raise ValueError(f"有限かつ非負でない値: {_v}")
+    _DUMMY_API_COST_PER_CALL = _v
+except (TypeError, ValueError):
+    logger.warning("DUMMY_API_COST_PER_CALL が不正（有限の非負数が必要）。既定値 10 を使用します")
+    _DUMMY_API_COST_PER_CALL = 10.0
+_DUMMY_API_COST_UNIT = os.environ.get("DUMMY_API_COST_UNIT", "¥")
+_AGENT_URLS_FOR_COST = [
+    _u for _u in (
+        os.environ.get("AWS_A2A_SERVER_RUNTIME_1_URL"),
+        os.environ.get("AWS_A2A_SERVER_RUNTIME_2_URL"),
+        os.environ.get("AWS_A2A_SERVER_RUNTIME_3_URL"),
+    ) if _u
+]
+
+
+def _fmt_cost(v: float) -> str:
+    """費用を見やすく整形（整数は小数点なし、端数は末尾0を除去）。"""
+    s = f"{v:.4f}".rstrip("0").rstrip(".")
+    return s or "0"
+
+
+def _fetch_mcp_counts(agent_urls: list[str]) -> dict:
+    """取得できたエージェントのみ {url: 累積count} を返す。
+
+    合算値ではなくエージェント別に返すのは、invoke 前後でスナップショット
+    できたエージェント集合が食い違った場合に、別プロセスの累積値同士を
+    減算して架空の費用を計上してしまうのを防ぐため（差分は前後ともに
+    取得できたエージェントの共通集合でのみ算出する）。
+    """
+    counts: dict = {}
+    for _url in agent_urls:
+        try:
+            _r = requests.get(_url.rstrip("/") + "/mcp-call-count", timeout=5)
+            _r.raise_for_status()
+            counts[_url] = int(_r.json().get("count", 0))
+        except Exception as _e:
+            logger.debug("mcp-call-count 取得失敗 %s: %s", _url, _e)
+    return counts
+
+
 def _run_invoke(
     orchestrator_url: str,
     prompt: str,
@@ -671,6 +722,9 @@ def _run_invoke(
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         headers = _make_request_headers(url, body)
 
+        # ダミーAPI課金: invoke 前の MCP 呼び出し累積数をエージェント別にスナップショット
+        _mcp_before = _fetch_mcp_counts(_AGENT_URLS_FOR_COST)
+
         logger.debug("POST %s (body_len=%d)", url, len(body))
         resp = requests.post(
             url,
@@ -687,6 +741,18 @@ def _run_invoke(
         data = resp.json()
         result_box["response"] = data.get("result", data)
         result_box["error"] = None
+
+        # ダミーAPI課金: 前後ともに取得できたエージェントの共通集合で per-agent 差分を合算
+        # （別プロセスの累積値同士の減算による架空課金を防ぐ）
+        _mcp_after = _fetch_mcp_counts(_AGENT_URLS_FOR_COST)
+        _common = set(_mcp_before) & set(_mcp_after)
+        if _common:
+            _delta = sum(max(0, _mcp_after[u] - _mcp_before[u]) for u in _common)
+            result_box["mcp_calls"] = _delta
+            result_box["api_cost"] = _delta * _DUMMY_API_COST_PER_CALL
+        else:
+            result_box["mcp_calls"] = None
+            result_box["api_cost"] = None
 
         # OUTPUT Guardrail チェック
         if guardrail_id:
@@ -814,6 +880,12 @@ if "rate_limit_enabled" not in st.session_state:
 if "rate_limit_max_calls" not in st.session_state:
     st.session_state.rate_limit_max_calls = 3
 
+# ダミーAPI課金のセッション累計
+if "chat_api_cost_total" not in st.session_state:
+    st.session_state.chat_api_cost_total = 0.0
+if "chat_mcp_calls_total" not in st.session_state:
+    st.session_state.chat_mcp_calls_total = 0
+
 # ---------------------------------------------------------------------------
 # バックグラウンドスレッドの完了チェック（スクリプト先頭）
 #
@@ -848,11 +920,19 @@ if st.session_state.chat_sending:
                 "events": _turn_events,
             })
         else:
+            _mcalls = result_box.get("mcp_calls")
+            _acost = result_box.get("api_cost")
             st.session_state.chat_messages.append({
                 "role": "assistant",
                 "content": _extract_text(result_box["response"]),
                 "events": _turn_events,
+                "mcp_calls": _mcalls,
+                "api_cost": _acost,
             })
+            # セッション累計に加算
+            if _mcalls is not None:
+                st.session_state.chat_mcp_calls_total += _mcalls
+                st.session_state.chat_api_cost_total += (_acost or 0.0)
         st.session_state.chat_sending = False
         st.session_state.chat_result_box = None
         st.rerun()
@@ -866,6 +946,16 @@ if st.session_state.chat_sending:
 
 st.title(T["chat_title"])
 st.caption(T["chat_caption"])
+
+# セッション累計のダミーAPI課金（経済的DoS演習用）
+_sess_calls = st.session_state.get("chat_mcp_calls_total", 0)
+_sess_cost = st.session_state.get("chat_api_cost_total", 0.0)
+st.markdown(
+    f"<div style='font-size:13px;color:#b45309;font-weight:600;margin:-4px 0 6px 0;'>"
+    f"💰 {T['chat_api_cost_session_total']}: {_DUMMY_API_COST_UNIT}{_fmt_cost(_sess_cost)}"
+    f"（{T['chat_api_cost_calls'].format(n=_sess_calls)}）</div>",
+    unsafe_allow_html=True,
+)
 
 # ---------------------------------------------------------------------------
 # サイドバー
@@ -1497,6 +1587,8 @@ with st.sidebar:
         st.session_state.chat_messages = []
         st.session_state.chat_sending = False
         st.session_state.chat_result_box = None
+        st.session_state.chat_api_cost_total = 0.0
+        st.session_state.chat_mcp_calls_total = 0
         st.session_state.chat_session_id = str(uuid.uuid4())
         st.rerun()
 
@@ -1518,6 +1610,17 @@ if st.session_state.chat_messages or st.session_state.chat_sending:
         st.markdown(_single_bubble_html(_msg, _user_b64, _robot_b64), unsafe_allow_html=True)
         if _msg["role"] == "assistant":
             _assistant_turn += 1
+            # ダミーAPI課金（このターンの MCP 呼び出し数 × 単価）
+            _mc = _msg.get("mcp_calls")
+            if _mc is not None:
+                _c = _msg.get("api_cost") or 0.0
+                st.markdown(
+                    f"<div style='font-size:12px;color:#b45309;margin:-6px 0 10px 0;'>"
+                    f"💸 {T['chat_api_cost_label']}: {_DUMMY_API_COST_UNIT}{_fmt_cost(_c)}"
+                    f"（{T['chat_api_cost_calls'].format(n=_mc)} × "
+                    f"{_DUMMY_API_COST_UNIT}{_fmt_cost(_DUMMY_API_COST_PER_CALL)}）</div>",
+                    unsafe_allow_html=True,
+                )
             _msg_events = _msg.get("events") or []
             if _msg_events:
                 with st.expander(
