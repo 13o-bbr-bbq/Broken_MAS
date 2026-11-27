@@ -71,6 +71,36 @@ rule BrokenMAS_Example_DetectHiddenInstruction
 _REPO_ROOT = Path(__file__).parent.parent.parent
 _BUNDLED_RULES_FILE = _REPO_ROOT / "custom_yara_rules" / "hotel_mas_injection.yara"
 
+
+@st.cache_data(show_spinner=False)
+def _load_builtin_yara_rules() -> list[tuple[str, str]]:
+    """mcpscanner パッケージ同梱の Built-in YARA ルール（.yar/.yara）を読み込む。
+
+    戻り値: [(表示名, ルール本文), ...]。パッケージ未検出や同梱ルールなしの場合は空リスト。
+    ルールはパッケージ内に固定のため、st.cache_data で1度だけ読み込む。
+    """
+    try:
+        import mcpscanner
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("mcpscanner を読み込めませんでした: %s", exc)
+        return []
+    import glob
+
+    pkg_dir = os.path.dirname(mcpscanner.__file__)
+    files = sorted(
+        set(glob.glob(os.path.join(pkg_dir, "**", "*.yar"), recursive=True))
+        | set(glob.glob(os.path.join(pkg_dir, "**", "*.yara"), recursive=True))
+    )
+    rules: list[tuple[str, str]] = []
+    for fp in files:
+        try:
+            text = Path(fp).read_text(encoding="utf-8", errors="replace")
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Built-in ルール読み込み失敗 %s: %s", fp, exc)
+            continue
+        rules.append((os.path.relpath(fp, pkg_dir), text))
+    return rules
+
 _SEVERITY_COLOR = {
     "HIGH":    "#FF4B4B",
     "MEDIUM":  "#FFA500",
@@ -325,6 +355,27 @@ with col_llm_head:
         st.caption(f"モデル: `{model_id}`")
         st.caption(f"リージョン: `{region}`")
         st.caption("認証: AWS Bedrock（既存の認証情報を使用）")
+
+# ---------------------------------------------------------------------------
+# Built-in YARA ルールの参照（同梱 .yara を表示）
+# ---------------------------------------------------------------------------
+if use_yara:
+    with st.expander("📖 Built-in YARA ルールを表示"):
+        _builtin_rules = _load_builtin_yara_rules()
+        if not _builtin_rules:
+            st.info(
+                "Built-in YARA ルールを読み込めませんでした。"
+                "mcpscanner パッケージが見つからないか、同梱の .yara ルールがありません。"
+            )
+        else:
+            st.caption(
+                f"mcpscanner 同梱の Built-in ルール（{len(_builtin_rules)} ファイル）。"
+                "英語パターン中心のため、Scenario E の日本語ペイロードは検出されません"
+                "（カスタムルールで対応する学習ポイント）。"
+            )
+            for _rule_name, _rule_text in _builtin_rules:
+                st.markdown(f"**`{_rule_name}`**")
+                st.code(_rule_text, language="yara")
 
 # ---------------------------------------------------------------------------
 # YARA カスタムルールエディタ
